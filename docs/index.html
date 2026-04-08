@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phosphor — Reference Manual</title>
+<style>
+  :root {
+    --bg:        #080808;
+    --bg2:       #111111;
+    --bg3:       #1a1a1a;
+    --border:    #2a2a2a;
+    --text:      #d0d0c8;
+    --dim:       #888880;
+    --green:     #3ec878;
+    --amber:     #c8a030;
+    --blue:      #5090d0;
+    --red:       #d05050;
+    --code-bg:   #141414;
+    --code-text: #a8c890;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 6rem;
+  }
+
+  /* ── Typography ── */
+  h1 { color: var(--green);  font-size: 2rem;   margin: 2rem 0 0.4rem; letter-spacing: 0.04em; }
+  h2 { color: var(--amber);  font-size: 1.25rem; margin: 2.5rem 0 0.8rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { color: var(--text);   font-size: 1rem;   margin: 1.4rem 0 0.4rem; }
+  p  { margin: 0.6rem 0; }
+  ul, ol { margin: 0.5rem 0 0.5rem 1.4rem; }
+  li { margin: 0.25rem 0; }
+  a  { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Code ── */
+  code {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 0.85em;
+    line-height: 1.55;
+    padding: 1rem 1.2rem;
+    border-radius: 5px;
+    border-left: 3px solid var(--border);
+    overflow-x: auto;
+    margin: 0.8rem 0;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+  /* ── Collapsible sections ── */
+  details { margin: 0.5rem 0; }
+  details > summary {
+    cursor: pointer;
+    color: var(--amber);
+    font-weight: 600;
+    font-size: 1.2rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    user-select: none;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before {
+    content: "▶";
+    font-size: 0.7em;
+    color: var(--dim);
+    transition: transform 0.15s;
+    display: inline-block;
+  }
+  details[open] > summary::before { transform: rotate(90deg); }
+  details > .section-body { padding: 0.8rem 0 1rem; }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.8rem 0;
+    font-size: 0.9em;
+  }
+  th {
+    background: var(--bg3);
+    color: var(--amber);
+    text-align: left;
+    padding: 0.45rem 0.7rem;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 0.4rem 0.7rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg2); }
+  td code { font-size: 0.85em; }
+
+  /* ── Callout boxes ── */
+  .note, .warn, .tip {
+    border-radius: 4px;
+    padding: 0.7rem 1rem;
+    margin: 1rem 0;
+    font-size: 0.93em;
+    border-left: 3px solid;
+  }
+  .note { background: #0d1a10; border-color: var(--green);  color: #a8d8b0; }
+  .warn { background: #1a100d; border-color: var(--red);    color: #d8a090; }
+  .tip  { background: #13120a; border-color: var(--amber);  color: #c8b888; }
+  .note strong, .warn strong, .tip strong { display: block; margin-bottom: 0.25rem; }
+
+  /* ── Nav ── */
+  nav {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1rem 1.2rem;
+    margin: 1.5rem 0 2.5rem;
+    font-size: 0.88em;
+    column-count: 2;
+    column-gap: 2rem;
+  }
+  nav a { color: var(--dim); display: block; padding: 0.15rem 0; }
+  nav a:hover { color: var(--green); }
+
+  /* ── Sub-heading inside section ── */
+  .api-entry { margin: 1.2rem 0 0.2rem; }
+  .sig {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.92em;
+    color: var(--green);
+    background: var(--bg3);
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+
+  /* ── Header ── */
+  .site-header { border-bottom: 1px solid var(--border); padding-bottom: 1.2rem; margin-bottom: 0.5rem; }
+  .site-header p { color: var(--dim); font-size: 0.93em; margin-top: 0.3rem; }
+  .version { font-size: 0.78em; color: var(--dim); font-family: monospace; }
+</style>
+</head>
+<body>
+
+<div class="site-header">
+  <h1>Phosphor</h1>
+  <p>A Lua-scriptable real-time graphics engine for live performance and audiovisual work.</p>
+  <span class="version">reference manual</span>
+</div>
+
+<nav>
+  <a href="#quickstart">Quick Start</a>
+  <a href="#anatomy">Scene Anatomy</a>
+  <a href="#drawing">Drawing API</a>
+  <a href="#transforms">Transform Stack</a>
+  <a href="#feedback">Feedback</a>
+  <a href="#shaders">Shader Pipeline</a>
+  <a href="#custom-shaders">Custom Shaders</a>
+  <a href="#noise">Noise Functions</a>
+  <a href="#images">Images &amp; Sprites</a>
+  <a href="#canvas">Canvas</a>
+  <a href="#waveforms">Waveforms</a>
+  <a href="#wire3d">3D Wireframe</a>
+  <a href="#fractals">Fractal Shaders</a>
+  <a href="#osc">OSC</a>
+  <a href="#keys">Keyboard</a>
+  <a href="#scenes">Example Scenes</a>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details open id="quickstart">
+<summary>Quick Start</summary>
+<div class="section-body">
+
+<h3>Build</h3>
+<pre><code>cmake -B build -DCMAKE_PREFIX_PATH=$(brew --prefix)
+cmake --build build</code></pre>
+
+<h3>Run</h3>
+<pre><code>./build/phosphor -s scenes/test.lua</code></pre>
+
+<h3>Command-line flags</h3>
+<table>
+  <tr><th>Flag</th><th>Description</th><th>Default</th></tr>
+  <tr><td><code>-s &lt;path&gt;</code></td><td>Scene file to load</td><td>—</td></tr>
+  <tr><td><code>-d &lt;n&gt;</code></td><td>Display index (0 = primary)</td><td>0</td></tr>
+  <tr><td><code>-h</code></td><td>Print help and exit</td><td>—</td></tr>
+</table>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details open id="anatomy">
+<summary>Scene Anatomy</summary>
+<div class="section-body">
+
+<p>A scene is a plain Lua file. The engine calls three optional global functions:</p>
+<table>
+  <tr><th>Hook</th><th>When called</th><th>Typical use</th></tr>
+  <tr><td><code>on_load()</code></td><td>Once, after the file is executed</td><td>Allocate canvases, load images, set initial shader</td></tr>
+  <tr><td><code>on_frame(dt)</code></td><td>Every frame — <code>dt</code> is seconds since last frame</td><td>Clear, draw geometry, advance animation state</td></tr>
+  <tr><td><code>on_osc(addr, ...)</code></td><td>Once per incoming OSC message</td><td>React to live control from SuperCollider / PD</td></tr>
+</table>
+
+<p>All three are optional. A scene that defines none of them is valid (the fallback triangle is shown).</p>
+
+<h3>Built-in globals</h3>
+<table>
+  <tr><th>Name</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>screen_width</code></td><td>integer</td><td>Drawable width in pixels (Retina-aware). Updated on resize and fullscreen toggle.</td></tr>
+  <tr><td><code>screen_height</code></td><td>integer</td><td>Drawable height in pixels.</td></tr>
+</table>
+
+<h3>Minimal scene template</h3>
+<pre><code>-- Copy-paste starting point
+
+local t = 0
+
+function on_load()
+    shader_set("scanlines")
+end
+
+function on_frame(dt)
+    t = t + dt
+    clear(0, 0, 0, 1)
+    set_color(0, 1, 0.4, 1)
+    draw_circle(screen_width / 2, screen_height / 2, 60 + math.sin(t * 2) * 20)
+end</code></pre>
+
+<h3>Hot reload</h3>
+<p>Save the scene file while Phosphor is running — changes appear within ~200 ms. The Lua VM is torn down and rebuilt; GPU state (renderer, FBOs, shader pipeline) is untouched. <code>on_load()</code> is called again after reload.</p>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="drawing">
+<summary>Drawing API</summary>
+<div class="section-body">
+
+<p>All coordinates are in pixel space: <strong>(0, 0) is the top-left corner</strong>, +X rightward, +Y downward. All geometry goes through the current transform matrix (see <a href="#transforms">Transform Stack</a>).</p>
+
+<h3>Clear</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>clear(r, g, b, a)</code></td><td>Fill the frame buffer with a solid colour. Call this at the start of <code>on_frame</code> unless you want feedback trails.</td></tr>
+</table>
+
+<h3>Colour state</h3>
+<p>Two independent colour registers. State persists across frames until changed.</p>
+<table>
+  <tr><th>Signature</th><th>Applies to</th><th>Default</th></tr>
+  <tr><td><code>set_color(r, g, b, a)</code></td><td><code>draw_rect</code>, <code>draw_circle</code></td><td>1, 1, 1, 1</td></tr>
+  <tr><td><code>set_stroke(r, g, b, a)</code></td><td><code>draw_line</code>, <code>draw_point</code></td><td>1, 1, 1, 1</td></tr>
+  <tr><td><code>set_stroke_weight(w)</code></td><td>Line thickness / point size in pixels</td><td>1.0</td></tr>
+  <tr><td><code>set_circle_segments(n)</code></td><td>Tessellation for <code>draw_circle</code></td><td>32</td></tr>
+</table>
+
+<h3>Primitives</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>draw_rect(x, y, w, h)</code></td><td>Filled rectangle. <code>(x, y)</code> is the top-left corner.</td></tr>
+  <tr><td><code>draw_circle(cx, cy, r)</code></td><td>Filled circle centred at <code>(cx, cy)</code> with radius <code>r</code> pixels.</td></tr>
+  <tr><td><code>draw_line(x1, y1, x2, y2)</code></td><td>Expanded quad line (not <code>glLineWidth</code>). Uses stroke colour + weight.</td></tr>
+  <tr><td><code>draw_point(x, y)</code></td><td>Square dot centred at <code>(x, y)</code>. Size = stroke weight.</td></tr>
+</table>
+
+<pre><code>function on_frame(dt)
+    clear(0.05, 0.05, 0.05, 1)
+
+    set_color(0.2, 0.8, 0.4, 1)
+    draw_rect(100, 100, 200, 80)
+
+    set_color(1, 0.3, 0.1, 1)
+    set_circle_segments(64)
+    draw_circle(400, 300, 50)
+
+    set_stroke(1, 1, 1, 1)
+    set_stroke_weight(2)
+    draw_line(0, 0, screen_width, screen_height)
+
+    set_stroke_weight(6)
+    draw_point(screen_width / 2, screen_height / 2)
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="transforms">
+<summary>Transform Stack</summary>
+<div class="section-body">
+
+<p>The transform stack works like Processing's <code>pushMatrix/popMatrix</code>. Transforms are post-multiplied — they apply in the order you call them.</p>
+
+<table>
+  <tr><th>Function</th><th>Description</th></tr>
+  <tr><td><code>push()</code></td><td>Save the current matrix. Pair every <code>push()</code> with a <code>pop()</code>.</td></tr>
+  <tr><td><code>pop()</code></td><td>Restore the matrix saved by the matching <code>push()</code>.</td></tr>
+  <tr><td><code>translate(x, y)</code></td><td>Move the origin by <code>(x, y)</code> pixels.</td></tr>
+  <tr><td><code>rotate(radians)</code></td><td>Rotate counter-clockwise around the current origin.</td></tr>
+  <tr><td><code>scale(sx, sy)</code></td><td>Scale around the current origin. Pass one value to scale uniformly.</td></tr>
+</table>
+
+<pre><code>-- Rotate a rectangle around its own centre
+push()
+    translate(cx, cy)   -- move origin to rect centre
+    rotate(angle)       -- rotate around that point
+    draw_rect(-hw, -hh, hw * 2, hh * 2)  -- draw centred at origin
+pop()                   -- restore transform</code></pre>
+
+<div class="warn">
+  <strong>Transform stack does not affect canvas or image draws</strong>
+  <code>canvas:draw()</code>, <code>img:draw()</code>, and <code>sheet:draw()</code> use a separate GPU shader
+  that bypasses the CPU transform matrix entirely.
+  <code>push/translate/rotate/scale</code> have <strong>no effect</strong> on these calls.
+  Use the <code>angle</code> parameter on those functions instead — see
+  <a href="#canvas">Canvas</a> and <a href="#images">Images &amp; Sprites</a>.
+</div>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="feedback">
+<summary>Feedback</summary>
+<div class="section-body">
+
+<p>Feedback blends the previous frame's final composited image over the current frame buffer. Call it <strong>before drawing geometry</strong> in <code>on_frame</code> — it acts as a persistent background that geometry is drawn on top of.</p>
+
+<span class="sig">draw_feedback(alpha [, scale [, angle]])</span>
+
+<table>
+  <tr><th>Parameter</th><th>Default</th><th>Effect</th></tr>
+  <tr><td><code>alpha</code></td><td>—</td><td>Blend weight 0–1. Lower = faster fade. Required.</td></tr>
+  <tr><td><code>scale</code></td><td>1.0</td><td>Scale the previous frame around the screen centre. &gt;1 = infinite zoom outward; &lt;1 = shrinking spiral.</td></tr>
+  <tr><td><code>angle</code></td><td>0.0</td><td>Rotate the previous frame around the screen centre (radians). Non-zero = rotating trail.</td></tr>
+</table>
+
+<h3>Alpha decay reference (at 60 fps)</h3>
+<table>
+  <tr><th>alpha</th><th>Half-life</th><th>Character</th></tr>
+  <tr><td>0.90</td><td>~0.4 s</td><td>Fast phosphor decay</td></tr>
+  <tr><td>0.95</td><td>~1.0 s</td><td>Medium trail</td></tr>
+  <tr><td>0.97</td><td>~1.6 s</td><td>Long smear</td></tr>
+  <tr><td>0.99</td><td>~5.0 s</td><td>Ghost persistence</td></tr>
+</table>
+
+<pre><code>function on_frame(dt)
+    -- No clear() — feedback IS the background
+    draw_feedback(0.93, 1.002, 0.002)   -- slow zoom + slow rotate = spiral trail
+
+    set_color(1, 1, 1, 1)
+    draw_circle(math.random() * screen_width,
+                math.random() * screen_height, 8)
+end</code></pre>
+
+<div class="tip">
+  <strong>Tip</strong>
+  Omitting <code>clear()</code> entirely and relying on feedback gives the classic CRT phosphor
+  look. Adding a very dark <code>clear(0,0,0,0.03)</code> as an FBO blend is not directly supported —
+  use <code>alpha &lt; 1.0</code> on <code>draw_feedback</code> instead.
+</div>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="shaders">
+<summary>Post-Process Shader Pipeline</summary>
+<div class="section-body">
+
+<p>Post-process shaders run on the full frame after geometry is drawn. Shaders are chained: the output of each feeds the next. The pipeline is applied once per frame, in <code>end_frame()</code>.</p>
+
+<table>
+  <tr><th>Function</th><th>Description</th></tr>
+  <tr><td><code>shader_set(name, ...)</code></td><td>Replace the entire pipeline. Pass multiple names to chain them left-to-right.</td></tr>
+  <tr><td><code>shader_add(name)</code></td><td>Append one shader to the current pipeline.</td></tr>
+  <tr><td><code>shader_clear()</code></td><td>Remove all post-process shaders.</td></tr>
+  <tr><td><code>shader_set_uniform(name, value)</code></td><td>Set a named <code>float</code> uniform on all active shaders.</td></tr>
+</table>
+
+<div class="warn">
+  <strong>Common mistake</strong>
+  Calling <code>shader_set</code> twice sets only the <em>last</em> pipeline.
+  To chain two shaders, pass both names to a single call:<br>
+  <code>shader_set("scanlines", "chromatic_ab")</code>
+</div>
+
+<h3>Built-in shaders</h3>
+<table>
+  <tr><th>Name</th><th>Effect</th><th>Uniforms</th></tr>
+  <tr><td><code>scanlines</code></td><td>Dims alternating pixel rows — CRT scanline look.</td><td>none</td></tr>
+  <tr><td><code>chromatic_ab</code></td><td>Samples R, G, B channels at slightly offset UVs — colour fringing on bright edges.</td><td><code>u_chrom_amount</code> (default 0.002)</td></tr>
+</table>
+
+<pre><code>function on_load()
+    shader_set("scanlines", "chromatic_ab")
+    shader_set_uniform("u_chrom_amount", 0.004)
+end
+
+-- Change aberration amount live
+function on_osc(addr, ...)
+    local args = {...}
+    if addr == "/chrom" then
+        shader_set_uniform("u_chrom_amount", args[1])
+    end
+end</code></pre>
+
+<p>All shaders receive these uniforms automatically:</p>
+<table>
+  <tr><th>Uniform</th><th>Type</th><th>Value</th></tr>
+  <tr><td><code>u_texture</code></td><td>sampler2D</td><td>Input frame texture</td></tr>
+  <tr><td><code>u_resolution</code></td><td>vec2</td><td>Drawable size in pixels</td></tr>
+  <tr><td><code>u_time</code></td><td>float</td><td>Elapsed seconds since startup</td></tr>
+  <tr><td><code>u_beat</code></td><td>float</td><td>Beat phase 0–1 (reserved for future use)</td></tr>
+</table>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="custom-shaders">
+<summary>Writing a Custom Shader</summary>
+<div class="section-body">
+
+<p>Place fragment shader files in <code>shaders/&lt;name&gt;.frag</code> relative to the working directory. Load with <code>shader_set("name")</code> — no extension, no path.</p>
+
+<h3>Required preamble</h3>
+<pre><code>#version 330 core
+
+uniform sampler2D u_texture;
+uniform vec2      u_resolution;
+uniform float     u_time;
+uniform float     u_beat;
+
+in  vec2 v_uv;
+out vec4 frag_color;</code></pre>
+
+<h3>Minimal passthrough</h3>
+<pre><code>#version 330 core
+uniform sampler2D u_texture;
+in  vec2 v_uv;
+out vec4 frag_color;
+
+void main() {
+    frag_color = texture(u_texture, v_uv);
+}</code></pre>
+
+<h3>Example: greyscale with vignette</h3>
+<pre><code>#version 330 core
+uniform sampler2D u_texture;
+uniform vec2      u_resolution;
+in  vec2 v_uv;
+out vec4 frag_color;
+
+void main() {
+    vec4 c = texture(u_texture, v_uv);
+    float grey = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+
+    // Vignette: darken corners
+    vec2 uv = v_uv * 2.0 - 1.0;
+    float vig = 1.0 - dot(uv, uv) * 0.4;
+
+    frag_color = vec4(vec3(grey * vig), c.a);
+}</code></pre>
+
+<h3>Custom float uniforms from Lua</h3>
+<pre><code>-- In Lua:
+shader_set("my_shader")
+shader_set_uniform("u_my_value", 0.5)
+
+-- In GLSL:
+uniform float u_my_value;</code></pre>
+
+<div class="note">
+  <strong>Note</strong>
+  Shaders are reloaded from disk each time <code>shader_set()</code> or <code>shader_add()</code> is called.
+  You can edit a <code>.frag</code> file and call <code>shader_set</code> from the scene to hot-reload it.
+</div>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="noise">
+<summary>Noise Functions</summary>
+<div class="section-body">
+
+<p>Classic Perlin noise (Ken Perlin's 2002 improved permutation table). All functions return values in <strong>[−1, 1]</strong>.</p>
+
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>noise(x)</code></td><td>1-D Perlin noise</td></tr>
+  <tr><td><code>noise(x, y)</code></td><td>2-D Perlin noise</td></tr>
+  <tr><td><code>noise(x, y, z)</code></td><td>3-D Perlin noise</td></tr>
+  <tr><td><code>fbm(x, y [, octaves [, lacunarity [, gain]]])</code></td><td>Fractal Brownian Motion — stacked octaves of noise</td></tr>
+</table>
+
+<h3>fbm defaults</h3>
+<table>
+  <tr><th>Parameter</th><th>Default</th><th>Effect</th></tr>
+  <tr><td><code>octaves</code></td><td>6</td><td>Number of noise layers (1–16)</td></tr>
+  <tr><td><code>lacunarity</code></td><td>2.0</td><td>Frequency multiplier per octave</td></tr>
+  <tr><td><code>gain</code></td><td>0.5</td><td>Amplitude multiplier per octave</td></tr>
+</table>
+
+<div class="tip">
+  <strong>Performance note</strong>
+  Noise is a Lua→C call with moderate overhead. Calling it for every pixel of a full-screen
+  grid (e.g. step = 4) will drop below 60 fps on large Retina displays.
+  Use a larger step (12–24 px) for realtime visualisations, or write a custom GLSL shader
+  for full-resolution noise fields — the GPU runs noise at native speed.
+</div>
+
+<pre><code>-- Scrolling 2-D noise field
+local scale = 0.006
+local t = 0
+
+function on_frame(dt)
+    t = t + dt * 0.4
+    clear(0, 0, 0, 1)
+    local step = 18
+    for y = 0, screen_height - 1, step do
+        for x = 0, screen_width - 1, step do
+            local n = noise(x * scale + t, y * scale) * 0.5 + 0.5
+            set_color(n, n * 0.8, n * 0.3, 1)
+            draw_rect(x, y, step, step)
+        end
+    end
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="images">
+<summary>Images &amp; Sprite Sheets</summary>
+<div class="section-body">
+
+<p>Images are loaded from PNG or JPG files. Load once in <code>on_load()</code> — not inside <code>on_frame()</code>.</p>
+
+<div class="warn">
+  <strong>Transform stack bypass</strong>
+  <code>img:draw()</code> and <code>sheet:draw()</code> use <code>draw_image()</code> internally, which runs through a
+  dedicated GPU shader. <code>push/translate/rotate/scale</code> have <strong>no effect</strong> on these calls.
+  Use the optional <code>angle</code> parameter for rotation.
+</div>
+
+<h3>image</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>image.load("path")</code></td><td>Load a PNG or JPG from disk. Returns an Image userdata.</td></tr>
+  <tr><td><code>img:draw(x, y [, w, h [, angle]])</code></td><td>Draw at pixel position. <code>w</code>/<code>h</code> default to image size. <code>angle</code> in radians, rotates around the draw rect's centre.</td></tr>
+  <tr><td><code>img:draw_region(x, y, w, h, sx, sy, sw, sh [, angle])</code></td><td>Draw a sub-rectangle of the image. All <code>s*</code> coords are in image pixel space.</td></tr>
+  <tr><td><code>img:width()</code>, <code>img:height()</code></td><td>Image dimensions in pixels.</td></tr>
+</table>
+
+<h3>sprite_sheet</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>sprite_sheet.new("path", fw, fh)</code></td><td>Load a sprite sheet with frame size <code>fw × fh</code> pixels.</td></tr>
+  <tr><td><code>sheet:draw(idx, x, y [, w, h [, angle]])</code></td><td>Draw one frame. <code>idx</code> is 1-based, left→right then top→bottom. <code>angle</code> rotates around draw rect centre.</td></tr>
+  <tr><td><code>sheet:frame_count()</code></td><td>Total frames in the sheet.</td></tr>
+  <tr><td><code>sheet:cols()</code>, <code>sheet:rows()</code></td><td>Grid dimensions.</td></tr>
+</table>
+
+<pre><code>local img
+local sheet
+local frame = 1
+local t = 0
+
+function on_load()
+    img   = image.load("assets/logo.png")
+    sheet = sprite_sheet.new("assets/walk.png", 64, 64)
+end
+
+function on_frame(dt)
+    t = t + dt
+    clear(0, 0, 0, 1)
+
+    -- Draw image, spinning slowly
+    img:draw(100, 100, img:width(), img:height(), t * 0.5)
+
+    -- Animate sprite sheet at 12 fps
+    frame = math.floor(t * 12) % sheet:frame_count() + 1
+    sheet:draw(frame, 400, 200, 128, 128)
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="canvas">
+<summary>Canvas</summary>
+<div class="section-body">
+
+<p>A canvas is an offscreen render target (FBO pair) with its own optional local shader chain. Render geometry into it, apply shaders scoped only to that canvas, then composite the result into the main scene.</p>
+
+<p><strong>Allocate canvases in <code>on_load()</code> or at the top level of the scene</strong> — not inside <code>on_frame()</code>. Creating an FBO pair every frame leaks GPU memory.</p>
+
+<h3>API</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>canvas.new(w, h)</code></td><td>Allocate an offscreen canvas at <code>w × h</code> pixels. Returns a Canvas userdata.</td></tr>
+  <tr><td><code>canvas:begin()</code></td><td>Redirect all subsequent draw calls into this canvas. Pushes the render-target stack.</td></tr>
+  <tr><td><code>canvas:finish([shader, ...])</code></td><td>Flush geometry, optionally run a local shader chain, pop the render-target stack. Zero or more shader names can be passed.</td></tr>
+  <tr><td><code>canvas:draw(x, y [, w, h [, angle]])</code></td><td>Blit the canvas result into the current scene. <code>w</code>/<code>h</code> default to canvas size. <code>angle</code> rotates around the draw rect's centre (radians).</td></tr>
+  <tr><td><code>canvas:set_uniform(name, value)</code></td><td>Set a named <code>float</code> uniform on this canvas's local shader pipeline. Must be called before <code>canvas:finish()</code>. See <a href="#fractals">Fractal Shaders</a> for the primary use case.</td></tr>
+  <tr><td><code>canvas:width()</code>, <code>canvas:height()</code></td><td>Canvas dimensions in pixels.</td></tr>
+</table>
+
+<div class="warn">
+  <strong>Transform stack bypass</strong>
+  <code>canvas:draw()</code> uses <code>draw_image()</code> internally and runs through a dedicated GPU shader.
+  <code>push/translate/rotate/scale</code> have <strong>no effect</strong> on canvas draws.
+  The <code>angle</code> parameter is the only way to rotate a canvas when compositing it.
+  Position and scale are controlled by the <code>x, y, w, h</code> arguments.
+</div>
+
+<h3>Frame flow</h3>
+<pre><code>function on_frame(dt)
+    -- Draw into canvas
+    c:begin()
+        clear(0, 0, 0, 1)
+        set_color(1, 0.4, 0.1, 1)
+        draw_circle(c:width()/2, c:height()/2, 80)
+    c:finish("chromatic_ab")    -- chromatic_ab applied only to this canvas
+
+    -- Composite into main scene
+    clear(0, 0, 0, 1)
+    c:draw(100, 50, 400, 300, math.sin(t) * 0.3)   -- positioned, scaled, rotated
+end</code></pre>
+
+<h3>Canvases nest</h3>
+<p>A <code>canvas:begin()</code> inside another canvas's <code>begin()/finish()</code> block works correctly — the render-target stack handles save/restore automatically.</p>
+
+<h3>Local shader chain</h3>
+<p>Shaders passed to <code>canvas:finish()</code> are scoped to that canvas only — they do not affect the rest of the scene. The main post-process pipeline (set with <code>shader_set()</code>) runs afterwards on the full composited frame.</p>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="waveforms">
+<summary>Waveforms</summary>
+<div class="section-body">
+
+<p>Two layers of waveform support: <strong>value functions</strong> that return a float for use as a modulator, and a <strong>renderer</strong> that draws a waveform as a polyline into the scene.</p>
+
+<p>In all functions, <code>t</code> is a phase in <strong>cycles</strong> — 0 = start of period, 1 = one full period, 2 = two periods. Passing <code>t * freq</code> gives you <code>freq</code> oscillations per second.</p>
+
+<h3>Value functions — return float in [−1, 1]</h3>
+<table>
+  <tr><th>Signature</th><th>Shape</th></tr>
+  <tr><td><code>wave_sine(t)</code></td><td>Smooth sine. Good for organic modulation.</td></tr>
+  <tr><td><code>wave_saw(t)</code></td><td>Ramps −1→+1 then jumps. Bright, harsh timbre.</td></tr>
+  <tr><td><code>wave_square(t [, duty])</code></td><td>+1 for the first <code>duty</code> fraction of the period, then −1. <code>duty</code> defaults to 0.5. Clamped to 0.01–0.99.</td></tr>
+  <tr><td><code>wave_tri(t)</code></td><td>Rises −1→+1 in first half-period, falls back in second. Softer than saw.</td></tr>
+</table>
+
+<h3>Renderer</h3>
+<span class="sig">draw_waveform(type, x, y, w, h [, cycles [, phase]])</span>
+<table>
+  <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>type</code></td><td>—</td><td>One of <code>"sine"</code>, <code>"saw"</code>, <code>"square"</code>, <code>"tri"</code>. Error if unknown.</td></tr>
+  <tr><td><code>x, y</code></td><td>—</td><td>Top-left corner of the bounding rectangle in pixel space.</td></tr>
+  <tr><td><code>w, h</code></td><td>—</td><td>Bounding rectangle dimensions. The waveform is centred vertically; amplitude = h/2.</td></tr>
+  <tr><td><code>cycles</code></td><td>1.0</td><td>Number of complete periods drawn across the width.</td></tr>
+  <tr><td><code>phase</code></td><td>0.0</td><td>Starting phase in cycles. Pass <code>t</code> here to scroll the waveform over time.</td></tr>
+</table>
+
+<p><code>draw_waveform</code> respects the CPU transform matrix — <code>push/translate/rotate/scale</code> apply. Sampling density is one sample per 2 pixels of width, clamped to 4–2048.</p>
+
+<pre><code>local t = 0
+
+function on_frame(dt)
+    t = t + dt
+    clear(0, 0, 0, 1)
+
+    -- Value function: modulate circle radius with a triangle wave at 0.5 Hz
+    local r = (wave_tri(t * 0.5) * 0.5 + 0.5) * 80 + 20
+    set_color(0.3, 0.8, 0.4, 1)
+    draw_circle(screen_width / 2, screen_height / 3, r)
+
+    -- Renderer: scrolling oscilloscope strip
+    set_stroke(0.2, 0.9, 0.4, 1)
+    set_stroke_weight(1.5)
+    draw_waveform("sine", 0, screen_height * 0.6, screen_width, 120, 3, t)
+
+    set_stroke(0.9, 0.4, 0.1, 1)
+    draw_waveform("saw", 0, screen_height * 0.75, screen_width, 120, 3, t * 1.5)
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="wire3d">
+<summary>3D Wireframe</summary>
+<div class="section-body">
+
+<p>CPU-side 3D projection using a right-handed Y-up coordinate system. All geometry is drawn as line segments using the current stroke colour and weight. The CPU transform matrix applies — wrap draws in <code>push()/pop()</code> to apply 2D offsets after projection.</p>
+
+<h3>Setup</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>camera_3d(ex, ey, ez, tx, ty, tz)</code></td><td>Set eye position and look target. Rebuilds the view matrix.</td></tr>
+  <tr><td><code>perspective_3d(fov [, near [, far]])</code></td><td>Set projection. <code>fov</code> in radians. Aspect ratio derived from <code>screen_width/screen_height</code> automatically. Defaults: fov=1.047 (60°), near=0.1, far=1000.</td></tr>
+  <tr><td><code>reset_3d()</code></td><td>Restore defaults: eye=(0,3,6) looking at origin, 60° FOV.</td></tr>
+</table>
+
+<h3>Projection</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>sx, sy = project_3d(wx, wy, wz)</code></td><td>Project a world-space point to screen pixel coordinates. Returns two values on success, or <strong>nothing</strong> (zero return values) if the point is behind the camera. Always check: <code>if sx then ... end</code>.</td></tr>
+</table>
+
+<h3>Shapes</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>draw_wire_cube(cx, cy, cz, size, rx, ry, rz)</code></td><td>Wireframe cube centred at <code>(cx,cy,cz)</code>. <code>rx/ry/rz</code> are Euler rotation angles in radians (applied Ry·Rx·Rz).</td></tr>
+  <tr><td><code>draw_wire_sphere(cx, cy, cz, r [, lat [, lon]])</code></td><td>Latitude rings + longitude arcs. Defaults: lat=8, lon=16.</td></tr>
+  <tr><td><code>draw_wire_grid(size, divs [, y])</code></td><td>XZ-plane grid centred at the origin at height <code>y</code> (default 0). <code>size</code> is total width/depth in world units; <code>divs</code> divisions per axis.</td></tr>
+</table>
+
+<div class="tip">
+  <strong>Performance note</strong>
+  Projection is done on the CPU in Lua→C calls. For dense point clouds (thousands of points per frame),
+  consider batching in a Lua table and projecting only visible points.
+  Spheres with many segments (lat &gt; 16, lon &gt; 32) can get expensive — 8/16 looks good at most sizes.
+</div>
+
+<pre><code>local t = 0
+
+function on_load()
+    perspective_3d(1.047, 0.1, 200.0)
+end
+
+function on_frame(dt)
+    t = t + dt
+    clear(0.03, 0.03, 0.03, 1)
+
+    -- Orbit camera around the scene
+    camera_3d(math.cos(t * 0.3) * 8, 3, math.sin(t * 0.3) * 8,   0, 0, 0)
+
+    set_stroke(0.15, 0.3, 0.15, 1)
+    draw_wire_grid(8, 8, 0)
+
+    set_stroke(0.3, 0.9, 0.4, 1)
+    set_stroke_weight(1.5)
+    draw_wire_cube(0, 1, 0,  1.2,  t * 0.7, t * 0.4, 0)
+
+    set_stroke(0.3, 0.6, 1.0, 1)
+    draw_wire_sphere(2, 1, 0,  0.8,  8, 16)
+
+    -- Manual projection: draw a point cloud
+    set_stroke(1.0, 0.7, 0.1, 1)
+    set_stroke_weight(4)
+    for i = 0, 23 do
+        local a = (i / 24) * math.pi * 2 + t
+        local sx, sy = project_3d(math.cos(a) * 2, 1.5, math.sin(a) * 2)
+        if sx then draw_point(sx, sy) end
+    end
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="fractals">
+<summary>Fractal Shaders</summary>
+<div class="section-body">
+
+<p>Two built-in fractal fragment shaders. Both <strong>ignore <code>u_texture</code> entirely</strong> — they generate the full image from the uniforms and <code>u_time</code>. They are most useful as:</p>
+<ul>
+  <li>Full-screen post-process: <code>shader_set("mandelbrot")</code> — replaces the frame entirely.</li>
+  <li>Canvas-local: render into a canvas via <code>canvas:finish("julia")</code> with uniforms set via <code>canvas:set_uniform()</code>, then composite the canvas into a larger scene.</li>
+</ul>
+
+<div class="warn">
+  <strong>Important</strong>
+  If you use a fractal shader in <code>canvas:finish()</code> without calling <code>canvas:set_uniform("u_zoom", ...)</code>, <code>u_zoom</code> defaults to 0 in GLSL. The shader clamps it to 0.0001, which maps the entire Mandelbrot/Julia set onto a microscopic region — the result is a near-uniform colour. Always set <code>u_zoom</code> to at least 1.0.
+</div>
+
+<h3>mandelbrot</h3>
+<p>Classic Mandelbrot set. Pan with <code>u_center_x/y</code>, zoom with <code>u_zoom</code>.</p>
+<table>
+  <tr><th>Uniform</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>u_center_x</code></td><td>0.0</td><td>Real axis pan. Try −0.75 for the classic seahorse valley view.</td></tr>
+  <tr><td><code>u_center_y</code></td><td>0.0</td><td>Imaginary axis pan.</td></tr>
+  <tr><td><code>u_zoom</code></td><td>0→1.0</td><td>Zoom level. 1.0 = full set visible. Higher = deeper zoom.</td></tr>
+  <tr><td><code>u_max_iter</code></td><td>0→32</td><td>Iteration cap. Higher = sharper boundary, slower GPU. 64–256 is typical.</td></tr>
+  <tr><td><code>u_color_shift</code></td><td>0.0</td><td>Phase offset into the cosine palette. Animating this cycles colours.</td></tr>
+  <tr><td><code>u_color_speed</code></td><td>0.05</td><td>Automatic palette cycle speed driven by <code>u_time</code>. Set to 0 if driving <code>u_color_shift</code> manually.</td></tr>
+</table>
+
+<h3>julia</h3>
+<p>Julia set. The complex constant <code>c = (u_julia_cx, u_julia_cy)</code> determines the shape. When both are 0 (GLSL default), the shader falls back to <code>c = (−0.7, 0.27)</code> — the Siegel disk.</p>
+<table>
+  <tr><th>Uniform</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>u_julia_cx</code></td><td>−0.7*</td><td>Real part of c. *Fallback only when both cx and cy are 0.</td></tr>
+  <tr><td><code>u_julia_cy</code></td><td>0.27*</td><td>Imaginary part of c.</td></tr>
+  <tr><td><code>u_zoom</code></td><td>0→1.0</td><td>As above.</td></tr>
+  <tr><td><code>u_max_iter</code></td><td>0→32</td><td>As above.</td></tr>
+  <tr><td><code>u_color_shift</code></td><td>0.0</td><td>As above.</td></tr>
+  <tr><td><code>u_color_speed</code></td><td>0.05</td><td>As above.</td></tr>
+  <tr><td><code>u_animate</code></td><td>0.0</td><td>If &gt; 0, orbits c around <code>(u_julia_cx, u_julia_cy)</code> at this radius, driven by <code>u_time</code>. Set to 0.3–0.5 for continuous morphing.</td></tr>
+</table>
+
+<h3>Interesting Julia c values</h3>
+<table>
+  <tr><th>cx</th><th>cy</th><th>Shape</th></tr>
+  <tr><td>−0.70</td><td>0.27</td><td>Siegel disk (default) — symmetric, lacy</td></tr>
+  <tr><td>−0.75</td><td>0.11</td><td>Douady rabbit — three-lobed</td></tr>
+  <tr><td>−0.12</td><td>0.74</td><td>Dendrite — near Misiurewicz point, spiky</td></tr>
+  <tr><td>0.28</td><td>0.01</td><td>Fat fractal — filled, blobby</td></tr>
+</table>
+
+<h3>Full-screen example</h3>
+<pre><code>local t = 0
+
+function on_frame(dt)
+    t = t + dt
+    clear(0, 0, 0, 1)
+
+    shader_set("julia")
+    shader_set_uniform("u_julia_cx",    -0.75)
+    shader_set_uniform("u_julia_cy",     0.11)
+    shader_set_uniform("u_zoom",         1.3)
+    shader_set_uniform("u_max_iter",     128.0)
+    shader_set_uniform("u_color_shift",  t * 0.03)
+    shader_set_uniform("u_color_speed",  0.0)
+    shader_set_uniform("u_animate",      0.0)
+end</code></pre>
+
+<h3>Canvas example (fractal as background layer)</h3>
+<pre><code>local c_frac
+
+function on_load()
+    c_frac = canvas.new(math.floor(screen_width), math.floor(screen_height))
+end
+
+function on_frame(dt)
+    t = t + dt
+    clear(0, 0, 0, 1)
+
+    -- Render Julia into canvas with full uniform control
+    c_frac:begin()
+        clear(0, 0, 0, 1)
+    c_frac:set_uniform("u_zoom",        1.3)
+    c_frac:set_uniform("u_max_iter",    96.0)
+    c_frac:set_uniform("u_color_shift", t * 0.02)
+    c_frac:set_uniform("u_color_speed", 0.0)
+    c_frac:set_uniform("u_animate",     0.3)
+    c_frac:finish("julia")
+
+    -- Draw as background, then composite geometry on top
+    c_frac:draw(0, 0, screen_width, screen_height)
+
+    -- Geometry drawn here sits on top of the fractal
+    set_stroke(1, 1, 1, 0.8)
+    set_stroke_weight(1.5)
+    draw_wire_cube(0, 1, 0, 1.2, t, t * 0.5, 0)
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="osc">
+<summary>OSC</summary>
+<div class="section-body">
+
+<p>Phosphor listens on <strong>UDP port 9000</strong>. Multiple clients (SuperCollider, Pure Data, TouchOSC, Max) send to the same port simultaneously — UDP is connectionless.</p>
+
+<p>Incoming messages are dispatched on the main thread once per frame. The <code>on_osc</code> hook is called once per message.</p>
+
+<span class="sig">function on_osc(addr, ...)</span>
+<table>
+  <tr><th>Argument</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>addr</code></td><td>string</td><td>OSC address path, e.g. <code>"/color"</code></td></tr>
+  <tr><td><code>...</code></td><td>numbers / strings</td><td>OSC int and float arguments arrive as Lua numbers; OSC strings arrive as Lua strings. Zero or more.</td></tr>
+</table>
+
+<h3>Example</h3>
+<pre><code>function on_osc(addr, ...)
+    local args = {...}
+    if addr == "/color" then
+        r, g, b = args[1], args[2], args[3]
+    elseif addr == "/speed" then
+        speed = args[1] or speed
+    elseif addr == "/bang" then
+        flash = true
+    end
+    -- Unknown addresses are silently ignored — no crash, no error.
+end</code></pre>
+
+<h3>Sending from SuperCollider</h3>
+<pre><code>~p = NetAddr("127.0.0.1", 9000);
+
+// Single message
+~p.sendMsg("/color", 1.0, 0.0, 0.5);
+
+// Routine for continuous control
+(
+r = Routine({
+    loop {
+        ~p.sendMsg("/speed", rrand(0.5, 2.0));
+        0.5.wait;
+    };
+}).play(AppClock);
+)
+r.stop;</code></pre>
+
+<h3>Engine-level address</h3>
+<p>One OSC address is handled by the engine itself and is <strong>never forwarded to <code>on_osc</code></strong>:</p>
+<table>
+  <tr><th>Address</th><th>Argument</th><th>Effect</th></tr>
+  <tr><td><code>/scene</code></td><td>string — file path</td><td>Load a new scene immediately. Path is relative to the working directory. Works from any client, even if the current scene has no <code>on_osc</code>.</td></tr>
+</table>
+<pre><code>-- SuperCollider
+~p.sendMsg("/scene", "scenes/matrix.lua");
+~p.sendMsg("/scene", "scenes/fractal_test.lua");</code></pre>
+
+<div class="note">
+  <strong>Note</strong>
+  If <code>on_osc</code> is not defined in the scene, all non-engine messages are silently discarded.
+</div>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="keys">
+<summary>Keyboard Shortcuts</summary>
+<div class="section-body">
+
+<table>
+  <tr><th>Key</th><th>Action</th></tr>
+  <tr><td><code>F</code></td><td>Toggle fullscreen on the current display. The viewport and Lua globals update immediately.</td></tr>
+  <tr><td><code>Esc</code></td><td>Quit.</td></tr>
+</table>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="scenes">
+<summary>Example Scenes</summary>
+<div class="section-body">
+
+<p>All example scenes are in <code>scenes/</code>. Run any of them with <code>./build/phosphor -s scenes/&lt;name&gt;.lua</code>.</p>
+
+<table>
+  <tr><th>File</th><th>Demonstrates</th></tr>
+  <tr>
+    <td><code>test.lua</code></td>
+    <td>Core drawing primitives: rect, circle, line, rotating square, dot grid. Regression test for Phases 1–4.</td>
+  </tr>
+  <tr>
+    <td><code>feedback_test.lua</code></td>
+    <td>Feedback trails. Random circles with <code>draw_feedback(0.92)</code> — no <code>clear()</code> needed.</td>
+  </tr>
+  <tr>
+    <td><code>noise_test.lua</code></td>
+    <td>Side-by-side Perlin noise vs fractal Brownian motion, scrolling over time.</td>
+  </tr>
+  <tr>
+    <td><code>canvas_test.lua</code></td>
+    <td>Two offscreen canvases, each with a different local shader. Demonstrates the canvas API and shader scoping.</td>
+  </tr>
+  <tr>
+    <td><code>wolfram_test.lua</code></td>
+    <td>Wolfram elementary cellular automata (rule 30, 90, 110, etc.). Scrolling row display.</td>
+  </tr>
+  <tr>
+    <td><code>osc_test.lua</code></td>
+    <td>Live OSC control. Handles <code>/color r g b</code>, <code>/size n</code>, <code>/bang</code>. SuperCollider example in comments.</td>
+  </tr>
+  <tr>
+    <td><code>datafield.lua</code></td>
+    <td>Monochrome data aesthetics: barcode strip, noise-driven dot grid, data-stream rows, sweeping scan pulse. OSC: <code>/speed</code>, <code>/density</code>, <code>/pulse</code>.</td>
+  </tr>
+  <tr>
+    <td><code>matrix.lua</code></td>
+    <td>Digital rain using geometric glyphs (dots, squares, octagons) instead of characters. OSC: <code>/speed</code>, <code>/color</code>.</td>
+  </tr>
+  <tr>
+    <td><code>life.lua</code></td>
+    <td>Conway's Game of Life on a toroidal grid. Newborn cells flash white; feedback provides phosphor afterglow. OSC: <code>/randomize</code>, <code>/speed</code>, <code>/color</code>.</td>
+  </tr>
+  <tr>
+    <td><code>waveform_test.lua</code></td>
+    <td>All four wave types as scrolling polylines (top half) and as radius modulators on circles (bottom half). OSC: <code>/speed</code>, <code>/cycles</code>.</td>
+  </tr>
+  <tr>
+    <td><code>wire3d_test.lua</code></td>
+    <td>Orbiting camera, rotating cube, wire sphere, floor grid, and a manual <code>project_3d()</code> point cloud tracing a Lissajous figure. OSC: <code>/cam_dist</code>, <code>/speed</code>.</td>
+  </tr>
+  <tr>
+    <td><code>fractal_test.lua</code></td>
+    <td>Four-phase automatic sequence: Mandelbrot zoom, Julia auto-orbit, Julia Douady rabbit, Mandelbrot deep zoom. OSC: <code>/zoom</code>, <code>/max_iter</code>, <code>/speed</code>, <code>/julia_cx</code>, <code>/julia_cy</code>, <code>/reset</code>.</td>
+  </tr>
+  <tr>
+    <td><code>everything_test.lua</code></td>
+    <td>All four generators composed: Julia fractal background (canvas), Game of Life grid, 3D wireframe orbiting above, waveform strip centred on screen with frequency driven by cell population. OSC: <code>/randomize</code>, <code>/speed</code>, <code>/julia_cx</code>, <code>/julia_cy</code>, <code>/cam_dist</code>.</td>
+  </tr>
+</table>
+
+</div>
+</details>
+
+</body>
+</html>
