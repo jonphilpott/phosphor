@@ -21,6 +21,7 @@ function on_load()
     -- Set a perspective projection once; aspect is derived from screen size.
     -- FOV 60 degrees (1.047 rad), near=0.1, far=200.
     perspective_3d(1.047, 0.1, 200.0)
+    shader_set("scanlines", "chromatic_ab")
 end
 
 function on_osc(addr, ...)
@@ -84,6 +85,4 @@ function on_frame(dt)
     set_stroke(0.9, 0.3, 0.3, 1)
     set_stroke_weight(1)
     draw_wire_cube(0, 2.2, 0,   0.4,   t * 2.1, t * 1.3, t * 0.8)
-
-    shader_set("scanlines", "chromatic_ab")
 end

@@ -12,6 +12,7 @@ local t = 0
 
 function on_load()
     print("test.lua — screen " .. screen_width .. "x" .. screen_height)
+    shader_set("scanlines", "chromatic_ab")
 end
 
 function on_frame(dt)
@@ -66,6 +67,4 @@ function on_frame(dt)
             draw_point(gx, gy)
         end
     end
-
-    shader_set("scanlines", "chromatic_ab")
 end

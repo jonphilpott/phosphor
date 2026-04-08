@@ -8,6 +8,7 @@
 #include "lua_canvas.h"
 #include "lua_waveform.h"
 #include "lua_3d.h"
+#include "lua_text.h"
 #include "renderer.h"
 #include "shader_pipeline.h"
 #include <vector>
@@ -280,4 +281,7 @@ void lua_bindings::register_all(lua_State* L) {
 
     // 3D wireframe (camera_3d, perspective_3d, project_3d, draw_wire_cube, etc. globals)
     lua_3d::register_all(L);
+
+    // Bitmap text (draw_text, text_width globals)
+    lua_text::register_all(L);
 }

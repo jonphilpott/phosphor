@@ -61,7 +61,12 @@ public:
 
 private:
     // Per-entry state: GPU program handle plus cached uniform locations.
-    // Caching uniform locations avoids a string lookup every frame.
+    // Caching uniform locations avoids a driver string lookup every frame.
+    //
+    // custom_locs caches locations for scene-defined uniforms (e.g. u_glitch_amount).
+    // Standard uniforms (u_texture etc.) are looked up once at load time and stored
+    // in the named fields.  Custom uniforms are looked up lazily on first use and
+    // then stored here — same O(1) cost from frame 2 onward.
     struct ShaderEntry {
         std::string name;
         GLuint prog        = 0;
@@ -69,6 +74,7 @@ private:
         GLint  u_resolution= -1;
         GLint  u_time      = -1;
         GLint  u_beat      = -1;
+        std::unordered_map<std::string, GLint> custom_locs;
     };
 
     // Compile + link one entry's fragment shader against the shared vertex shader.

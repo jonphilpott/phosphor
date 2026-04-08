@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "lua_bindings.h"
+#include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
 // GLAD defines the actual GL function pointer stubs — including it after
@@ -319,6 +320,33 @@ void Engine::run() {
                 continue;   // do not forward to Lua's on_osc
             }
 
+            // ── Engine-level OSC: /beat <phase> ──────────────────────────────
+            // Updates m_beat (→ u_beat in all shaders) and fires on_beat(phase).
+            // phase is a float the caller defines — common convention is [0..1)
+            // where 0 = downbeat, or a raw beat counter from the sequencer clock.
+            // SuperCollider example:
+            //   TempoClock.default.schedAbs(TempoClock.default.nextBar, {
+            //       ~p.sendMsg("/beat", 0.0); nil });
+            if (msg.address == "/beat") {
+                if (!msg.args.empty()) {
+                    if      (msg.args[0].type == 'f') m_beat = msg.args[0].f;
+                    else if (msg.args[0].type == 'i') m_beat = (float)msg.args[0].i;
+                }
+                // Fire the optional on_beat(phase) Lua hook.
+                if (lua_getglobal(m_lua.L, "on_beat") == LUA_TFUNCTION) {
+                    lua_pushnumber(m_lua.L, (double)m_beat);
+                    if (lua_pcall(m_lua.L, 1, 0, 0) != LUA_OK) {
+                        const char* err = lua_tostring(m_lua.L, -1);
+                        fprintf(stderr, "Lua error [on_beat]: %s\n",
+                                err ? err : "(no message)");
+                        lua_pop(m_lua.L, 1);
+                    }
+                } else {
+                    lua_pop(m_lua.L, 1);
+                }
+                continue;   // do not forward to Lua's on_osc
+            }
+
             // Look up the global function on_osc.  If it isn't defined in the
             // current scene, silently skip — not every scene needs OSC input.
             if (lua_getglobal(m_lua.L, "on_osc") != LUA_TFUNCTION) {
@@ -375,7 +403,7 @@ void Engine::run() {
 
         // Flush vertices, run post-process pipeline, blit to screen,
         // copy result to feedback FBO.
-        if (m_has_scene) m_renderer.end_frame(&m_pipeline, m_time, 0.0f);
+        if (m_has_scene) m_renderer.end_frame(&m_pipeline, m_time, m_beat);
 
         // Fallback triangle — only when no scene is loaded.
         if (!m_has_scene) render_fallback();
@@ -460,63 +488,14 @@ void Engine::toggle_fullscreen() {
     m_lua.set_screen_size(m_draw_w, m_draw_h);
 }
 
-// ── compile_shader() ─────────────────────────────────────────────────────────
-
-unsigned int Engine::compile_shader(unsigned int type, const char* src) {
-    // Create a shader object on the GPU and upload the GLSL source text.
-    unsigned int id = glCreateShader(type);
-    glShaderSource(id, 1, &src, nullptr);
-    glCompileShader(id);
-
-    // Check if compilation succeeded.
-    int ok = 0;
-    glGetShaderiv(id, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        // Fetch and print the driver's error log — it contains the line number
-        // and description, e.g. "0(12) : error C0000: syntax error".
-        char log[512];
-        glGetShaderInfoLog(id, sizeof(log), nullptr, log);
-        fprintf(stderr, "Shader compile error (%s):\n%s\n",
-                type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
-        glDeleteShader(id);
-        return 0;
-    }
-    return id;
-}
-
-// ── link_program() ───────────────────────────────────────────────────────────
-
-unsigned int Engine::link_program(unsigned int vert, unsigned int frag) {
-    unsigned int prog = glCreateProgram();
-    glAttachShader(prog, vert);
-    glAttachShader(prog, frag);
-    glLinkProgram(prog);
-
-    int ok = 0;
-    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[512];
-        glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
-        fprintf(stderr, "Program link error:\n%s\n", log);
-        glDeleteProgram(prog);
-        return 0;
-    }
-
-    // The individual shader objects are no longer needed once linked into
-    // a program — mark them for deletion (they're freed when detached).
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    return prog;
-}
-
 // ── setup_triangle() ─────────────────────────────────────────────────────────
 
 void Engine::setup_triangle() {
-    // Compile and link the demo shaders.
-    unsigned int vert = compile_shader(GL_VERTEX_SHADER,   k_vert_src);
-    unsigned int frag = compile_shader(GL_FRAGMENT_SHADER, k_frag_src);
+    // Compile and link the demo shaders via the shared gl_utils helpers.
+    GLuint vert = gl_compile_shader(GL_VERTEX_SHADER,   k_vert_src);
+    GLuint frag = gl_compile_shader(GL_FRAGMENT_SHADER, k_frag_src);
     if (!vert || !frag) return;
-    m_shader_prog = link_program(vert, frag);
+    m_shader_prog = gl_link_program(vert, frag);
     if (!m_shader_prog) return;
 
     // A VAO (Vertex Array Object) records the vertex format description so we

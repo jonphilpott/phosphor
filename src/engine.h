@@ -36,8 +36,6 @@ private:
 
     // Fallback — draws a coloured triangle when no scene is loaded.
     void render_fallback();
-    unsigned int compile_shader(unsigned int type, const char* src);
-    unsigned int link_program(unsigned int vert, unsigned int frag);
     void setup_triangle();
 
     // ── Member data ───────────────────────────────────────────────────────
@@ -67,6 +65,7 @@ private:
     Uint64 m_fps_ticks   = 0;
     int    m_fps_frames  = 0;
     float  m_time        = 0.0f;  // elapsed seconds — forwarded to shaders as u_time
+    float  m_beat        = 0.0f;  // beat phase [0..1), set by /beat OSC — forwarded as u_beat
 
     // ── Hot reload state ──────────────────────────────────────────────────
     std::string m_scene_path;               // path passed to load_scene()

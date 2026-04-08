@@ -1,6 +1,7 @@
 // glad.h first — must precede any other GL headers.
 #include <glad/glad.h>
 #include "shader_pipeline.h"
+#include "gl_utils.h"
 
 #include <cstdio>
 #include <cstring>
@@ -53,46 +54,6 @@ static char* read_file(const char* path) {
     return buf;
 }
 
-// ── GLSL compile + link helpers ───────────────────────────────────────────────
-
-static GLuint compile_shader(GLenum type, const char* src) {
-    GLuint id = glCreateShader(type);
-    glShaderSource(id, 1, &src, nullptr);
-    glCompileShader(id);
-
-    GLint ok = 0;
-    glGetShaderiv(id, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[512];
-        glGetShaderInfoLog(id, sizeof(log), nullptr, log);
-        fprintf(stderr, "ShaderPipeline: shader compile error:\n%s\n", log);
-        glDeleteShader(id);
-        return 0;
-    }
-    return id;
-}
-
-static GLuint link_program(GLuint vert, GLuint frag) {
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, vert);
-    glAttachShader(prog, frag);
-    glLinkProgram(prog);
-
-    GLint ok = 0;
-    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[512];
-        glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
-        fprintf(stderr, "ShaderPipeline: program link error:\n%s\n", log);
-        glDeleteProgram(prog);
-        return 0;
-    }
-
-    // Individual shader objects are no longer needed once the program is linked.
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    return prog;
-}
 
 // ── ShaderPipeline::init() ────────────────────────────────────────────────────
 
@@ -155,8 +116,8 @@ bool ShaderPipeline::load_shader(ShaderEntry& entry) {
 
     // Compile the shared quad vertex shader fresh for each program.
     // The driver de-duplicates identical SPIR-V/IR internally so this is cheap.
-    GLuint vert = compile_shader(GL_VERTEX_SHADER,   k_quad_vert);
-    GLuint frag = compile_shader(GL_FRAGMENT_SHADER, frag_src);
+    GLuint vert = gl_compile_shader(GL_VERTEX_SHADER,   k_quad_vert);
+    GLuint frag = gl_compile_shader(GL_FRAGMENT_SHADER, frag_src);
     free(frag_src);
 
     if (!vert || !frag) {
@@ -165,7 +126,7 @@ bool ShaderPipeline::load_shader(ShaderEntry& entry) {
         return false;
     }
 
-    entry.prog = link_program(vert, frag);  // deletes vert+frag on success
+    entry.prog = gl_link_program(vert, frag);  // deletes vert+frag on success
     if (!entry.prog) return false;
 
     // Cache uniform locations so we avoid string lookups every frame.
@@ -259,9 +220,18 @@ int ShaderPipeline::apply(GLuint fbos[2], GLuint texs[2], int w, int h,
         if (shader.u_beat      >= 0) glUniform1f(shader.u_beat, beat);
 
         // Upload any custom float uniforms the Lua scene has set.
+        // Locations are cached in shader.custom_locs on first use — glGetUniformLocation
+        // is a driver string-hash lookup and adds up when called every frame.
         for (const auto& kv : m_uniforms) {
-            GLint loc = glGetUniformLocation(shader.prog, kv.first.c_str());
-            if (loc >= 0) glUniform1f(loc, kv.second);
+            auto it = shader.custom_locs.find(kv.first);
+            if (it == shader.custom_locs.end()) {
+                // First time we've seen this uniform name for this shader: look it up
+                // and store the result (-1 if the shader doesn't declare it).
+                GLint loc = glGetUniformLocation(shader.prog, kv.first.c_str());
+                shader.custom_locs[kv.first] = loc;
+                it = shader.custom_locs.find(kv.first);
+            }
+            if (it->second >= 0) glUniform1f(it->second, kv.second);
         }
 
         // Draw the fullscreen quad — this runs the fragment shader over every pixel.
