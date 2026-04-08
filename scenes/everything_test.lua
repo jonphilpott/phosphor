@@ -122,6 +122,9 @@ function on_load()
     -- but it will be stretched to fit via canvas:draw().
     -- Use explicit integer cast — canvas.new requires integer dimensions.
     c_julia = canvas.new(math.floor(screen_width), math.floor(screen_height))
+      shader_set("glitch", "scanlines")
+      -- dial the intensity up or down (default 0.35):
+      shader_set_uniform("u_glitch_amount", 0.6)
 end
 
 function on_osc(addr, ...)
@@ -252,6 +255,4 @@ function on_frame(dt)
                       3.0, ch.phase)
     end
 
-    -- Post-process: subtle scanlines over the whole composited frame.
-    shader_set("scanlines", "chromatic_ab")
 end

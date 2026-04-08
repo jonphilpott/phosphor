@@ -41,7 +41,7 @@ local t = 0.0         -- master time accumulator (seconds × speed)
 function on_load()
     -- Scanlines give the alternating-row dimming that Ikeda's work often has
     -- when screenshotted from CRT output.  Adds texture without geometry cost.
-    shader_set("scanlines")
+    shader_set("glitch", "chromatic_ab")
 end
 
 function on_osc(addr, ...)

@@ -102,7 +102,7 @@ function on_frame(dt)
     -- ── Activate the fractal shader ───────────────────────────────────────────
     -- shader_set() replaces the full post-process pipeline for this frame.
     -- Uniforms must be set AFTER shader_set() so the shader program exists.
-    shader_set(p.shader, "chromatic_ab", "scanlines")
+    shader_set(p.shader, "chromatic_ab", "glitch")
 
     if p.shader == "mandelbrot" then
         shader_set_uniform("u_center_x",    p.cx)
