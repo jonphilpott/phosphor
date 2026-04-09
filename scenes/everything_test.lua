@@ -27,7 +27,7 @@
 -- ── Config ────────────────────────────────────────────────────────────────────
 local CELL      = 12          -- life grid cell size in pixels
 local GEN_RATE  = 12          -- target generations per second
-local WAVE_H    = 240         -- height of the waveform strip
+local WAVE_H    = 480         -- height of the waveform strip
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 local t         = 0.0
@@ -36,12 +36,14 @@ local cam_dist  = 7.0
 local julia_cx  = -0.7
 local julia_cy  =  0.27
 
--- Life grid dimensions — computed from screen size in on_load
+-- Life grid — the conway C++ primitive handles B3/S23 rule evaluation and
+-- toroidal wrap.  We keep a Lua-side age[] table (flat, 1-indexed) for the
+-- newborn colour fade, since conway only exposes binary live/dead state.
+local ca                  -- conway userdata, created in on_load
 local cols, rows
-local grid, nxt, age     -- flat 1D arrays: index = row*cols + col + 1
+local age    = {}         -- age[r*cols + c + 1] = consecutive live generations
 
--- Generation accumulator: we advance the sim by whole steps but track
--- fractional time so the rate stays consistent regardless of frame rate.
+-- Generation accumulator: advance by whole steps, track fractional remainder.
 local gen_acc   = 0.0
 local pop       = 0.0    -- live cell fraction [0..1], smoothed
 
@@ -54,59 +56,35 @@ local function init_grid(density)
     density = density or 0.35
     cols = math.floor(screen_width  / CELL)
     rows = math.floor(screen_height / CELL)
+    ca   = conway.new(cols, rows)
+    ca:randomize(density)
     local n = cols * rows
-    grid = {}
-    nxt  = {}
-    age  = {}
-    for i = 1, n do
-        grid[i] = (math.random() < density) and 1 or 0
-        nxt[i]  = 0
-        age[i]  = 0
-    end
+    age = {}
+    for i = 1, n do age[i] = 0 end
 end
 
 local function step_life()
+    -- C++ evaluates one full B3/S23 generation (toroidal, double-buffered).
+    ca:step()
+
+    -- Walk every cell to update the age table and accumulate population.
+    -- ca:get() is 1-indexed: get(col, row) with col and row both in [1, dim].
     local live = 0
-    for r = 0, rows - 1 do
-        for c = 0, cols - 1 do
-            -- Toroidal wrap: neighbours at the edges connect to the other side.
-            local rn = (r - 1 + rows) % rows
-            local rs = (r + 1)        % rows
-            local cw = (c - 1 + cols) % cols
-            local ce = (c + 1)        % cols
-
-            -- Count the 8 neighbours.  Using flat index arithmetic is faster than
-            -- building a coordinate pair each time.
-            local n8 = grid[rn*cols+cw+1] + grid[rn*cols+c+1]  + grid[rn*cols+ce+1]
-                     + grid[r *cols+cw+1]                       + grid[r *cols+ce+1]
-                     + grid[rs*cols+cw+1] + grid[rs*cols+c+1]  + grid[rs*cols+ce+1]
-
-            local idx  = r*cols + c + 1
-            local cell = grid[idx]
-
-            -- B3/S23: born with 3 neighbours, survives with 2 or 3.
-            if cell == 1 then
-                nxt[idx] = (n8 == 2 or n8 == 3) and 1 or 0
+    for r = 1, rows do
+        for c = 1, cols do
+            local i     = (r - 1) * cols + c
+            local alive = ca:get(c, r)
+            if alive == 1 then
+                age[i] = age[i] + 1
+                live   = live   + 1
             else
-                nxt[idx] = (n8 == 3) and 1 or 0
-            end
-
-            -- Age tracks how many consecutive generations a cell has been alive.
-            -- Used below to fade newborn cells from white to their base colour.
-            if nxt[idx] == 1 then
-                age[idx] = (cell == 1) and (age[idx] + 1) or 0
-                live = live + 1
-            else
-                age[idx] = 0
+                age[i] = 0
             end
         end
     end
 
-    -- Swap buffers: nxt becomes the new grid.
-    grid, nxt = nxt, grid
-
-    -- Smooth the population fraction so waveform amplitude doesn't jump.
-    -- Simple one-pole lowpass: pop = 0.9*pop + 0.1*new_value
+    -- One-pole lowpass keeps the population signal smooth so waveform
+    -- amplitude doesn't jump on large die-off or birth events.
     pop = pop * 0.9 + (live / (cols * rows)) * 0.1
 end
 
@@ -122,7 +100,7 @@ function on_load()
     -- but it will be stretched to fit via canvas:draw().
     -- Use explicit integer cast — canvas.new requires integer dimensions.
     c_julia = canvas.new(math.floor(screen_width), math.floor(screen_height))
-      shader_set("glitch", "scanlines")
+      shader_set("glitch", "chromatic_ab")
       -- dial the intensity up or down (default 0.35):
       shader_set_uniform("u_glitch_amount", 0.6)
 end
@@ -176,13 +154,14 @@ function on_frame(dt)
     for _ = 1, steps do step_life() end
 
     -- ── Layer 2: Conway's Game of Life grid ───────────────────────────────────
+    -- Loop is 0-based for pixel maths; ca:get() takes 1-based col/row.
     for r = 0, rows - 1 do
         for c = 0, cols - 1 do
-            local idx = r * cols + c + 1
-            if grid[idx] == 1 then
+            if ca:get(c + 1, r + 1) == 1 then
+                local i  = r * cols + c + 1
                 -- Fade newborn cells (age 0) from white to base green.
                 -- t_age approaches 1 after ~8 generations.
-                local a  = math.min(age[idx] / 8.0, 1.0)
+                local a  = math.min(age[i] / 8.0, 1.0)
                 local rr = 1.0 - a * 0.7    -- white → green-ish
                 local gg = 1.0
                 local bb = 1.0 - a * 0.6
@@ -221,16 +200,6 @@ function on_frame(dt)
     -- wy is the top of the strip, positioned so the block sits in the middle.
     local wy = math.floor((screen_height - WAVE_H) * 0.5)
 
-    -- Dark semi-transparent background so the fractal glows through faintly.
-    set_color(0.02, 0.05, 0.02, 0.88)
-    draw_rect(0, wy, screen_width, WAVE_H)
-
-    -- Thin border lines top and bottom.
-    set_stroke(0.2, 0.35, 0.2, 1)
-    set_stroke_weight(1)
-    draw_line(0, wy,          screen_width, wy)
-    draw_line(0, wy + WAVE_H, screen_width, wy + WAVE_H)
-
     -- Four waveform channels, each occupying one quarter of the strip height.
     -- Channel 1: sine — frequency modulated by population (busier grid = faster)
     -- Channel 2: triangle — slow drift
@@ -246,7 +215,7 @@ function on_frame(dt)
         { type = "saw",    phase = t * 2.0,  r = 0.8, g = 0.2, b = 0.7 },
     }
 
-    set_stroke_weight(1.5)
+    set_stroke_weight(16.0)
     for i, ch in ipairs(channels) do
         set_stroke(ch.r, ch.g, ch.b, 0.9)
         draw_waveform(ch.type,

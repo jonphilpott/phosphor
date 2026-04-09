@@ -24,10 +24,10 @@ public:
     bool init();
     void run();
     void load_scene(const char* path);
+    void toggle_fullscreen();
 
 private:
     void handle_events();
-    void toggle_fullscreen();
 
     // Tear down the Lua VM, reinitialise it, and reload the current scene file.
     // Called automatically when the scene file's mtime changes.

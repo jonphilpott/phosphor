@@ -29,7 +29,7 @@ local HELIX      = 0.18   -- phase offset per ring so dots spiral (radians)
 
 -- ── Parameters (OSC-controllable) ─────────────────────────────────────────────
 local speed       = 2.5         -- rings per second
-local cr, cg, cb  = 0.0, 1.0, 0.35  -- dot colour
+local cr, cg, cb  = 1.0, 1.0, 1.0  -- dot colour
 
 -- ── Internal state ────────────────────────────────────────────────────────────
 local t           = 0.0
@@ -48,10 +48,6 @@ local gen_yaw   = 0   -- heading: left/right angle (radians)
 local gen_pitch = 0   -- heading: up/down angle (radians)
 local yaw_v     = 0   -- yaw velocity (accumulates drift + impulses)
 local pitch_v   = 0   -- pitch velocity
-
--- Impulses injected by OSC /left /right /up /down; decay each path step
-local imp_yaw   = 0
-local imp_pitch = 0
 
 -- ── Math helpers ──────────────────────────────────────────────────────────────
 
@@ -107,20 +103,22 @@ local function path_step()
     local drift_pitch = math.sin(t * 0.26) * 0.008
                       + math.cos(t * 0.43) * 0.005
 
-    -- Accumulate velocity with damping + drift + OSC impulse.
+    -- Accumulate velocity with damping + drift.
     -- 0.93 damping keeps velocity from building indefinitely.
-    yaw_v   = yaw_v   * 0.93 + drift_yaw   + imp_yaw
-    pitch_v = pitch_v * 0.93 + drift_pitch + imp_pitch
-
-    -- Decay impulses — they fade over several path steps rather than cutting off.
-    imp_yaw   = imp_yaw   * 0.75
-    imp_pitch = imp_pitch * 0.75
+    yaw_v   = yaw_v   * 0.93 + drift_yaw
+    pitch_v = pitch_v * 0.93 + drift_pitch
 
     gen_yaw   = gen_yaw + yaw_v
     gen_pitch = gen_pitch + pitch_v
-    -- Soft bounce: when pitch hits the ceiling/floor, reverse and damp the
-    -- velocity rather than hard-clamping it.  Hard clamping keeps pitch_v
-    -- pushing against the wall every frame, causing a visible stutter.
+
+    -- Soft bounce on both axes: when the heading hits the ceiling/floor,
+    -- reverse and damp the velocity rather than hard-clamping it.
+    -- Hard clamping keeps velocity pushing against the wall every frame
+    -- (visible stutter).  gen_yaw MUST be bounded — without a ceiling the
+    -- tunnel can rotate through a full 360° on a hard impulse and come back,
+    -- which looks like it's spinning out of control.
+    if gen_yaw   >  1.3 then gen_yaw   =  1.3; yaw_v   = -yaw_v   * 0.4 end
+    if gen_yaw   < -1.3 then gen_yaw   = -1.3; yaw_v   = -yaw_v   * 0.4 end
     if gen_pitch >  0.75 then gen_pitch =  0.75; pitch_v = -pitch_v * 0.4 end
     if gen_pitch < -0.75 then gen_pitch = -0.75; pitch_v = -pitch_v * 0.4 end
 
@@ -146,12 +144,66 @@ local function path_step()
     ring_offset = ring_offset + 1
 end
 
+-- ── Immediate steer: rebuild the forward path on OSC impulse ──────────────────
+--
+-- The problem with injecting impulses through path_step() alone:
+--   path_step fires based on camera travel (once every ~400ms at default speed).
+--   The new direction appears at path[PBUF] (the tail).  The camera look-target
+--   is at path[8]/path[9].  The change takes (PBUF−8) ≈ 46 path steps ≈ 18 s
+--   to propagate forward to the look target.  That's useless for beat sync.
+--
+-- Fix: when an impulse fires we immediately rebuild path[HEAD+1 .. PBUF] in
+-- place using the kicked yaw_v/pitch_v.  path[1..HEAD] is left intact so the
+-- camera's world position (interpolated from path[1]/path[2]) doesn't jump.
+-- HEAD=5 keeps the nearest 5 rings stable; the kink at path[6] is invisible
+-- because near rings are already faded to zero by the near-fade logic.
+-- The look target at path[8]/path[9] IS in the rebuilt zone — the camera
+-- turns within the same frame the OSC message arrives.
+local REBUILD_HEAD = 5
+
+local function rebuild_ahead()
+    -- Simulate gen_yaw/gen_pitch/yaw_v/pitch_v forward from the current
+    -- state WITHOUT modifying the persistent variables.  path_step() will
+    -- continue correctly from its own state on the next normal frame tick.
+    local ry  = gen_yaw
+    local rp  = gen_pitch
+    local ryv = yaw_v
+    local rpv = pitch_v
+
+    for i = REBUILD_HEAD + 2, PBUF do
+        local drift_yaw   = math.sin(t * 0.31) * 0.011 + math.sin(t * 0.17) * 0.007
+        local drift_pitch = math.sin(t * 0.26) * 0.008 + math.cos(t * 0.43) * 0.005
+
+        ryv = ryv * 0.93 + drift_yaw
+        rpv = rpv * 0.93 + drift_pitch
+        ry  = ry  + ryv
+        rp  = rp  + rpv
+
+        -- Same bounds as path_step() to prevent the rebuild diverging.
+        if ry   >  1.3  then ry  =  1.3;  ryv = -ryv * 0.4 end
+        if ry   < -1.3  then ry  = -1.3;  ryv = -ryv * 0.4 end
+        if rp   >  0.75 then rp  =  0.75; rpv = -rpv * 0.4 end
+        if rp   < -0.75 then rp  = -0.75; rpv = -rpv * 0.4 end
+
+        local nx = -math.sin(ry) * math.cos(rp)
+        local ny =  math.sin(rp)
+        local nz = -math.cos(ry) * math.cos(rp)
+
+        local prev = path[i - 1]
+        path[i] = {
+            prev[1] + nx * RING_SPACE,
+            prev[2] + ny * RING_SPACE,
+            prev[3] + nz * RING_SPACE,
+        }
+    end
+end
+
 -- ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 function on_load()
     math.randomseed()
     path_init()
-    shader_set("chromatic_ab", "scanlines", "glitch")
+    shader_set("chromatic_ab", "glitch")
       shader_set_uniform("u_glitch_amount", 0.6)
 end
 
@@ -163,10 +215,10 @@ function on_osc(addr, ...)
         cb = args[3] or cb
     elseif addr == "/speed" then
         speed = math.max(0.5, math.min(15.0, args[1] or speed))
-    elseif addr == "/left"  then imp_yaw   = imp_yaw   - 0.28
-    elseif addr == "/right" then imp_yaw   = imp_yaw   + 0.28
-    elseif addr == "/up"    then imp_pitch = imp_pitch + 0.22
-    elseif addr == "/down"  then imp_pitch = imp_pitch - 0.22
+    elseif addr == "/left"  then yaw_v   = yaw_v   - 0.15; rebuild_ahead()
+    elseif addr == "/right" then yaw_v   = yaw_v   + 0.15; rebuild_ahead()
+    elseif addr == "/up"    then pitch_v = pitch_v + 0.12; rebuild_ahead()
+    elseif addr == "/down"  then pitch_v = pitch_v - 0.12; rebuild_ahead()
     end
 end
 

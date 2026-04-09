@@ -159,5 +159,4 @@ function on_frame(dt)
     draw_dot_grid()
     draw_streams()
     draw_barcode()
-    draw_scan_pulse()
 end
