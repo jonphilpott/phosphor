@@ -1,4 +1,4 @@
-#version 330 core
+#version 140
 
 // ── julia.frag ────────────────────────────────────────────────────────────────
 // Generates a Julia set — ignores u_texture entirely.

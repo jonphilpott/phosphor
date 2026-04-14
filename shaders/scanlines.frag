@@ -1,4 +1,4 @@
-#version 330 core
+#version 140
 
 // ── scanlines.frag ────────────────────────────────────────────────────────────
 // Dims every other horizontal row to simulate a CRT scanline pattern.

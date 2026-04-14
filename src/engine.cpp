@@ -23,17 +23,17 @@ static time_t file_mtime(const char* path) {
 // These are plain C strings embedded in the binary.  In Phase 4 we will load
 // shaders from .glsl files instead.
 //
-// "layout(location = 0)" binds the attribute to slot 0 — this must match the
-// glVertexAttribPointer calls in setup_triangle() below.
+// Attribute slots are pinned via glBindAttribLocation before linking (see
+// setup_triangle below) — this must match the glVertexAttribPointer calls.
 
 static const char* k_vert_src = R"glsl(
-#version 330 core
+#version 140
 
 // Slot 0: 2D position in Normalised Device Coordinates (-1..1 on each axis).
-layout(location = 0) in vec2 a_pos;
+in vec2 a_pos;
 
 // Slot 1: RGB colour per vertex — we interpolate this across the triangle.
-layout(location = 1) in vec3 a_color;
+in vec3 a_color;
 
 out vec3 v_color;   // passed through to the fragment shader
 
@@ -46,7 +46,7 @@ void main() {
 )glsl";
 
 static const char* k_frag_src = R"glsl(
-#version 330 core
+#version 140
 
 in  vec3 v_color;
 out vec4 frag_color;
@@ -102,7 +102,7 @@ bool Engine::init() {
     // glBegin/glEnd are removed.  This is what we want — it forces good
     // habits and is the only profile guaranteed on macOS.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,  SDL_GL_CONTEXT_PROFILE_CORE);
 
     // macOS REQUIRES the forward-compatible flag to get a Core Profile context.
@@ -495,7 +495,7 @@ void Engine::setup_triangle() {
     GLuint vert = gl_compile_shader(GL_VERTEX_SHADER,   k_vert_src);
     GLuint frag = gl_compile_shader(GL_FRAGMENT_SHADER, k_frag_src);
     if (!vert || !frag) return;
-    m_shader_prog = gl_link_program(vert, frag);
+    m_shader_prog = gl_link_program(vert, frag, {{0, "a_pos"}, {1, "a_color"}});
     if (!m_shader_prog) return;
 
     // A VAO (Vertex Array Object) records the vertex format description so we

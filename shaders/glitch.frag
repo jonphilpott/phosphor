@@ -1,4 +1,4 @@
-#version 330 core
+#version 140
 
 // ── glitch.frag ───────────────────────────────────────────────────────────────
 // Digital glitch / signal corruption effect.

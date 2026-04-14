@@ -1,4 +1,4 @@
-#version 330 core
+#version 140
 
 // ── mandelbrot.frag ───────────────────────────────────────────────────────────
 // Generates a Mandelbrot set — ignores u_texture entirely.

@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cassert>
+#include <initializer_list>
+#include <utility>
 
 // Maximum vertices we'll ever push in a single frame.
 // Sized for dense automata grids at Retina resolution:
@@ -22,10 +24,10 @@ static constexpr int MAX_VERTS = 1048576;
 //   NDC_y = -(pixel_y / H) * 2 + 1           (maps 0..H → +1..-1, flips Y)
 
 static const char* k_vert = R"glsl(
-#version 330 core
+#version 140
 
-layout(location = 0) in vec2 a_pos;
-layout(location = 1) in vec4 a_color;
+in vec2 a_pos;
+in vec4 a_color;
 
 uniform vec2 u_resolution;  // drawable size in pixels
 
@@ -42,7 +44,7 @@ void main() {
 )glsl";
 
 static const char* k_frag = R"glsl(
-#version 330 core
+#version 140
 in  vec4 v_color;
 out vec4 frag_color;
 void main() {
@@ -63,10 +65,10 @@ void main() {
 // Scale and rotate are applied around the NDC origin (screen centre).
 
 static const char* k_blit_vert = R"glsl(
-#version 330 core
+#version 140
 
-layout(location = 0) in vec2 a_pos;   // NDC position, -1..1
-layout(location = 1) in vec2 a_uv;    // texture coordinate, 0..1
+in vec2 a_pos;   // NDC position, -1..1
+in vec2 a_uv;    // texture coordinate, 0..1
 
 // Column-major 3×3 matrix for scale + rotate around the screen centre.
 // Pass mat3(1.0) (identity) for a plain fullscreen blit.
@@ -85,7 +87,7 @@ void main() {
 )glsl";
 
 static const char* k_blit_frag = R"glsl(
-#version 330 core
+#version 140
 
 uniform sampler2D u_texture;
 uniform float     u_alpha;   // overall alpha multiplier (1.0 = fully opaque)
@@ -108,10 +110,10 @@ void main() {
 // pixel rect and interpolates UVs across the specified sub-region.
 
 static const char* k_img_vert = R"glsl(
-#version 330 core
+#version 140
 
-layout(location = 0) in vec2 a_pos;   // NDC -1..1 (from the shared quad VAO)
-layout(location = 1) in vec2 a_uv;    // not used — we compute UV from uniforms
+in vec2 a_pos;   // NDC -1..1 (from the shared quad VAO)
+in vec2 a_uv;    // not used — we compute UV from uniforms
 
 uniform vec2  u_resolution;   // render-target size in pixels
 uniform vec4  u_rect;         // destination rect: x, y, w, h  in pixel space
@@ -162,7 +164,7 @@ void main() {
 )glsl";
 
 static const char* k_img_frag = R"glsl(
-#version 330 core
+#version 140
 uniform sampler2D u_texture;
 in  vec2 v_uv;
 out vec4 frag_color;
@@ -242,9 +244,13 @@ static unsigned int compile(unsigned int type, const char* src) {
     return id;
 }
 
-static unsigned int link(unsigned int v, unsigned int f) {
+static unsigned int link(unsigned int v, unsigned int f,
+    std::initializer_list<std::pair<unsigned int, const char*>> attribs = {})
+{
     unsigned int p = glCreateProgram();
     glAttachShader(p, v); glAttachShader(p, f);
+    for (const auto& [loc, name] : attribs)
+        glBindAttribLocation(p, loc, name);
     glLinkProgram(p);
     int ok; glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if (!ok) {
@@ -270,7 +276,7 @@ bool Renderer::init(int w, int h) {
     unsigned int vert = compile(GL_VERTEX_SHADER,   k_vert);
     unsigned int frag = compile(GL_FRAGMENT_SHADER, k_frag);
     if (!vert || !frag) return false;
-    m_shader_prog = link(vert, frag);
+    m_shader_prog = link(vert, frag, {{0, "a_pos"}, {1, "a_color"}});
     if (!m_shader_prog) return false;
 
     m_u_resolution = glGetUniformLocation(m_shader_prog, "u_resolution");
@@ -296,7 +302,7 @@ bool Renderer::init(int w, int h) {
     unsigned int bv = compile(GL_VERTEX_SHADER,   k_blit_vert);
     unsigned int bf = compile(GL_FRAGMENT_SHADER, k_blit_frag);
     if (!bv || !bf) return false;
-    m_blit_prog = link(bv, bf);
+    m_blit_prog = link(bv, bf, {{0, "a_pos"}, {1, "a_uv"}});
     if (!m_blit_prog) return false;
 
     m_blit_u_texture   = glGetUniformLocation(m_blit_prog, "u_texture");
@@ -309,7 +315,7 @@ bool Renderer::init(int w, int h) {
     unsigned int iv = compile(GL_VERTEX_SHADER,   k_img_vert);
     unsigned int if_ = compile(GL_FRAGMENT_SHADER, k_img_frag);
     if (!iv || !if_) return false;
-    m_img_prog = link(iv, if_);
+    m_img_prog = link(iv, if_, {{0, "a_pos"}, {1, "a_uv"}});
     if (!m_img_prog) return false;
 
     m_img_u_texture    = glGetUniformLocation(m_img_prog, "u_texture");

@@ -1,4 +1,4 @@
-#version 330 core
+#version 140
 
 // ── chromatic_ab.frag ─────────────────────────────────────────────────────────
 // Chromatic aberration: samples the R, G and B channels at slightly offset UVs.

@@ -16,10 +16,10 @@
 // The quad covers NDC (-1,-1) → (1,1) which is the entire viewport.
 // UV (0,0) = bottom-left of the texture (OpenGL convention).
 static const char* k_quad_vert = R"glsl(
-#version 330 core
+#version 140
 
-layout(location = 0) in vec2 a_pos;   // NDC position, -1..1
-layout(location = 1) in vec2 a_uv;    // Texture coordinate, 0..1
+in vec2 a_pos;   // NDC position, -1..1
+in vec2 a_uv;    // Texture coordinate, 0..1
 
 out vec2 v_uv;
 
@@ -126,7 +126,7 @@ bool ShaderPipeline::load_shader(ShaderEntry& entry) {
         return false;
     }
 
-    entry.prog = gl_link_program(vert, frag);  // deletes vert+frag on success
+    entry.prog = gl_link_program(vert, frag, {{0, "a_pos"}, {1, "a_uv"}});  // deletes vert+frag on success
     if (!entry.prog) return false;
 
     // Cache uniform locations so we avoid string lookups every frame.

@@ -11,6 +11,8 @@
 
 #include <glad/glad.h>
 #include <cstdio>
+#include <initializer_list>
+#include <utility>
 
 // Compile one GLSL shader stage.
 // type: GL_VERTEX_SHADER or GL_FRAGMENT_SHADER.
@@ -36,10 +38,19 @@ static inline GLuint gl_compile_shader(GLenum type, const char* src) {
 // Link a vertex + fragment shader into a program.
 // On success: deletes vert and frag (they're no longer needed) and returns prog.
 // On failure: returns 0 and prints the driver link log to stderr.
-static inline GLuint gl_link_program(GLuint vert, GLuint frag) {
+//
+// attribs: optional list of {slot, name} pairs passed to glBindAttribLocation
+// before linking.  In GL 3.1 / GLSL 1.40, layout(location=N) is not available
+// in vertex shaders, so we use this to pin attribute slots explicitly instead.
+// The slot numbers must match the glVertexAttribPointer calls in the VAO setup.
+static inline GLuint gl_link_program(GLuint vert, GLuint frag,
+    std::initializer_list<std::pair<GLuint, const char*>> attribs = {})
+{
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
+    for (const auto& [loc, name] : attribs)
+        glBindAttribLocation(prog, loc, name);
     glLinkProgram(prog);
 
     GLint ok = 0;
