@@ -180,6 +180,8 @@
   <a href="#shaders">Shader Pipeline</a>
   <a href="#custom-shaders">Custom Shaders</a>
   <a href="#noise">Noise Functions</a>
+  <a href="#wolfram">Wolfram 1D CA</a>
+  <a href="#conway">Conway's Game of Life</a>
   <a href="#images">Images &amp; Sprites</a>
   <a href="#canvas">Canvas</a>
   <a href="#waveforms">Waveforms</a>
@@ -550,6 +552,174 @@ function on_frame(dt)
             local n = noise(x * scale + t, y * scale) * 0.5 + 0.5
             set_color(n, n * 0.8, n * 0.3, 1)
             draw_rect(x, y, step, step)
+        end
+    end
+end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="wolfram">
+<summary>Wolfram 1D Cellular Automata</summary>
+<div class="section-body">
+
+<p>A Wolfram elementary cellular automaton is a 1D row of binary cells that evolves one generation at a time. Each cell's next state is determined by a 3-bit neighbourhood (left, centre, right) looked up in an 8-bit <strong>rule number</strong> (0–255). The engine keeps a ring buffer of the last <em>N</em> rows so you can draw the full history scrolling upward — oldest row at the top, newest at the bottom.</p>
+
+<h3>Constructor</h3>
+<span class="sig">wolfram.new(rule, width [, rows]) → userdata</span>
+<table>
+  <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>rule</code></td><td>—</td><td>Rule number 0–255. Determines how every possible 3-cell neighbourhood maps to the next cell state.</td></tr>
+  <tr><td><code>width</code></td><td>—</td><td>Number of cells per row. Edges wrap (toroidal), so the automaton behaves as a ring — no boundary artefacts.</td></tr>
+  <tr><td><code>rows</code></td><td>256</td><td>History ring buffer depth. Older generations past this limit are silently overwritten.</td></tr>
+</table>
+
+<h3>Methods</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>ca:seed([pos])</code></td><td>Clear the buffer and place a single live cell. <code>pos</code> is 1-indexed; defaults to the centre column. Classic starting condition for triangle-shaped rules like 90.</td></tr>
+  <tr><td><code>ca:randomize()</code></td><td>Clear the buffer and fill the initial row with random 0/1 values. Good for chaotic rules like 30.</td></tr>
+  <tr><td><code>ca:step()</code></td><td>Compute one new generation from the current newest row and advance the ring buffer head. Call once per frame to scroll in real time.</td></tr>
+  <tr><td><code>ca:draw(x, y [, cell_w [, cell_h]])</code></td><td>Draw all stored history rows from oldest (top) to newest (bottom) as filled rectangles. Uses the current <code>set_color()</code> fill. <code>cell_w</code> and <code>cell_h</code> default to 4.0.</td></tr>
+  <tr><td><code>ca:get(i)</code></td><td>Return 0 or 1 for column <code>i</code> (1-indexed) of the current newest row.</td></tr>
+  <tr><td><code>ca:set(i, v)</code></td><td>Write 0 or 1 into column <code>i</code> (1-indexed) of the current newest row. Useful for seeding custom patterns before stepping.</td></tr>
+</table>
+
+<h3>Notable rules</h3>
+<table>
+  <tr><th>Rule</th><th>Pattern</th><th>Notes</th></tr>
+  <tr><td>30</td><td>Chaotic / noise-like</td><td>Used in Mathematica's random number generator. Good for organic textures.</td></tr>
+  <tr><td>90</td><td>Sierpiński triangle</td><td>Self-similar fractal — the canonical demo for <code>ca:seed()</code>.</td></tr>
+  <tr><td>110</td><td>Complex structure</td><td>Proven Turing-complete. Produces irregular but non-chaotic patterns.</td></tr>
+  <tr><td>184</td><td>Traffic flow</td><td>Models single-lane traffic — particles flow rightward, jam at density.</td></tr>
+</table>
+
+<div class="tip">
+  <strong>Sizing tip</strong>
+  To fill the screen exactly, derive <code>width</code> and <code>rows</code> from the screen globals:
+  <code>math.floor(screen_width / cell_w)</code> and <code>math.floor(screen_height / cell_h)</code>.
+  The draw call then tiles the output flush to all four edges.
+</div>
+
+<pre><code>-- Wolfram rule 90: Sierpiński triangle scrolling upward
+local cell_w = 8
+local cell_h = 8
+local cols = math.floor(screen_width  / cell_w)
+local rows = math.floor(screen_height / cell_h)
+
+local ca = wolfram.new(90, cols, rows)
+ca:seed()   -- single centre cell — produces the classic triangle
+
+function on_frame(dt)
+    clear(0, 0, 0, 1)
+    ca:step()
+    set_color(1, 1, 1, 1)
+    ca:draw(0, 0, cell_w, cell_h)
+end</code></pre>
+
+<pre><code>-- Rule 30 with a random start — chaotic, noise-like texture
+local ca = wolfram.new(30, math.floor(screen_width / 4), math.floor(screen_height / 4))
+ca:randomize()
+
+function on_frame(dt)
+    clear(0, 0, 0, 1)
+    ca:step()
+    set_color(0.2, 0.9, 0.5, 1)
+    ca:draw(0, 0, 4, 4)
+end</code></pre>
+
+<pre><code>-- Reading cell state to drive something else (e.g. brightness modulation)
+-- ca:get() reads the most recently computed row (1-indexed columns)
+local brightness = ca:get(math.floor(cols / 2))  -- centre column, 0 or 1
+set_color(brightness, brightness * 0.8, brightness * 0.4, 1)</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="conway">
+<summary>Conway's Game of Life</summary>
+<div class="section-body">
+
+<p>A 2D cellular automaton using the classic B3/S23 rule set: a dead cell with exactly 3 live neighbours is <strong>born</strong>; a live cell with 2 or 3 live neighbours <strong>survives</strong>; all other cells die. The grid wraps toroidally — left/right and top/bottom edges connect — so gliders and other patterns travel indefinitely without hitting a wall.</p>
+
+<p>The engine maintains two identically-sized buffers (current and next generation) in C and swaps them in O(1) after each step, so the Lua side sees a clean live/dead state without any partial-update artefacts.</p>
+
+<h3>Constructor</h3>
+<span class="sig">conway.new(width, height) → userdata</span>
+<table>
+  <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>width</code></td><td>—</td><td>Grid width in cells.</td></tr>
+  <tr><td><code>height</code></td><td>—</td><td>Grid height in cells.</td></tr>
+</table>
+
+<h3>Methods</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>ca:randomize([density])</code></td><td>Fill the grid randomly. <code>density</code> is the fraction of cells that start alive (0.0–1.0, default 0.35). A random soup at ~35% usually evolves into a stable mix of still lifes, oscillators, and gliders within a few hundred generations.</td></tr>
+  <tr><td><code>ca:clear()</code></td><td>Set all cells to dead. Useful before stamping a pattern in via <code>ca:set()</code>.</td></tr>
+  <tr><td><code>ca:step()</code></td><td>Compute one full generation of B3/S23 and swap buffers. Call once per frame for real-time simulation, or multiple times per frame to fast-forward.</td></tr>
+  <tr><td><code>ca:draw(x, y [, cell_w [, cell_h]])</code></td><td>Draw all live cells as filled rectangles using the current <code>set_color()</code> fill. <code>cell_w</code> and <code>cell_h</code> default to 4.0. Dead cells are not drawn, so the background shows through.</td></tr>
+  <tr><td><code>ca:get(x, y)</code></td><td>Return 0 or 1 for the cell at column <code>x</code>, row <code>y</code> (both 1-indexed) in the current generation.</td></tr>
+  <tr><td><code>ca:set(x, y, v)</code></td><td>Write 0 or 1 into column <code>x</code>, row <code>y</code> (both 1-indexed). Takes effect immediately — the next <code>ca:step()</code> will use the written value.</td></tr>
+</table>
+
+<div class="note">
+  <strong>Indexing convention</strong>
+  All coordinates are <strong>1-indexed</strong>, consistent with Lua conventions.
+  Column 1 is the leftmost cell; row 1 is the topmost cell.
+  A grid created with <code>conway.new(cols, rows)</code> has valid x in [1, cols] and y in [1, rows].
+</div>
+
+<h3>Basic usage — random soup</h3>
+<pre><code>local cell_w = 4
+local cell_h = 4
+local cols = math.floor(screen_width  / cell_w)
+local rows = math.floor(screen_height / cell_h)
+
+local g = conway.new(cols, rows)
+g:randomize(0.35)
+
+function on_frame(dt)
+    clear(0, 0, 0, 1)
+    g:step()
+    set_color(0, 1, 0.4, 1)   -- green phosphor glow
+    g:draw(0, 0, cell_w, cell_h)
+end</code></pre>
+
+<h3>Stamping a custom pattern</h3>
+<pre><code>-- Place a glider in the top-left corner before the simulation starts
+local function stamp_glider(g, ox, oy)
+    -- Classic glider pattern (offsets are 1-indexed column, row)
+    g:set(ox + 2, oy + 1, 1)
+    g:set(ox + 3, oy + 2, 1)
+    g:set(ox + 1, oy + 3, 1)
+    g:set(ox + 2, oy + 3, 1)
+    g:set(ox + 3, oy + 3, 1)
+end
+
+local g = conway.new(80, 60)
+g:clear()
+stamp_glider(g, 2, 2)   -- top-left corner</code></pre>
+
+<h3>Reading state for custom rendering</h3>
+<p><code>ca:draw()</code> is the fast path, but <code>ca:get()</code> lets you read individual cells and apply your own colour logic — for example, fading newborn cells from white to green using an age counter, as in <code>everything_test.lua</code>.</p>
+<pre><code>-- Custom rendering: colour cells by age
+local age = {}
+for i = 1, cols * rows do age[i] = 0 end
+
+-- Inside on_frame, after ca:step():
+for r = 1, rows do
+    for c = 1, cols do
+        local i = (r - 1) * cols + c
+        if ca:get(c, r) == 1 then
+            age[i] = age[i] + 1
+            local t = math.min(age[i] / 8.0, 1.0)   -- 0 = newborn, 1 = aged
+            set_color(1.0 - t * 0.8, 1.0, 1.0 - t * 0.6, 1)
+            draw_rect((c-1) * cell_w, (r-1) * cell_h, cell_w - 1, cell_h - 1)
+        else
+            age[i] = 0
         end
     end
 end</code></pre>
@@ -997,6 +1167,10 @@ r.stop;</code></pre>
   <tr>
     <td><code>wolfram_test.lua</code></td>
     <td>Wolfram elementary cellular automata (rule 30, 90, 110, etc.). Scrolling row display.</td>
+  </tr>
+  <tr>
+    <td><code>conway_test.lua</code></td>
+    <td>Conway's Game of Life at 4×4 pixel cells. Random 35% soup; minimal scene demonstrating the <code>conway</code> API.</td>
   </tr>
   <tr>
     <td><code>osc_test.lua</code></td>
