@@ -93,7 +93,7 @@ bool Engine::init() {
         return false;
     }
 
-    // Step 2: Request an OpenGL 3.3 Core Profile context.
+    // Step 2: Request an OpenGL 3.1 Core Profile context.
     //
     // These attributes MUST be set before SDL_CreateWindow — SDL reads them
     // when it creates the window's pixel format.
@@ -166,8 +166,8 @@ bool Engine::init() {
     }
 
     // Verify we actually got the version we asked for.
-    if (!GLAD_GL_VERSION_3_3) {
-        fprintf(stderr, "OpenGL 3.3 not supported on this system\n");
+    if (!GLAD_GL_VERSION_3_1) {
+        fprintf(stderr, "OpenGL 3.1 not supported on this system\n");
         return false;
     }
     printf("OpenGL %s — %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER));
