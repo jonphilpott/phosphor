@@ -46,10 +46,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Go fullscreen before loading the scene so on_load() sees the correct
-    // screen_width/screen_height globals for the fullscreen resolution.
+    // Queue fullscreen for after the first frame — see Engine::request_fullscreen()
+    // for why it must be deferred on Wayland.
     if (start_fullscreen) {
-        engine.toggle_fullscreen();
+        engine.request_fullscreen();
     }
 
     // Load the startup scene after init so the GL context is ready and

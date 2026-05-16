@@ -25,6 +25,7 @@ public:
     void run();
     void load_scene(const char* path);
     void toggle_fullscreen();
+    void request_fullscreen();
 
 private:
     void handle_events();
@@ -44,7 +45,8 @@ private:
     SDL_Window*   m_window     = nullptr;
     SDL_GLContext m_gl_ctx     = nullptr;
     bool          m_running    = false;
-    bool          m_fullscreen = false;
+    bool          m_fullscreen         = false;
+    bool          m_pending_fullscreen = false;
     bool          m_has_scene  = false;
     int           m_draw_w     = 0;
     int           m_draw_h     = 0;

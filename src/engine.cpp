@@ -410,6 +410,20 @@ void Engine::run() {
 
         // Swap the back buffer to the screen (respects vsync interval set above).
         SDL_GL_SwapWindow(m_window);
+
+        // Deferred startup fullscreen — only fires once, on the first frame.
+        //
+        // Under vsync, SDL_GL_SwapWindow blocks until the compositor's frame
+        // callback fires, which means by the time we reach here the compositor
+        // has already composited our frame and sent wl_surface.enter.  SDL now
+        // holds the correct wl_output reference and will pass it to
+        // xdg_toplevel_set_fullscreen instead of NULL, so the compositor puts
+        // us on the right display rather than defaulting to display 0.
+        if (m_pending_fullscreen) {
+            m_pending_fullscreen = false;
+            SDL_PumpEvents();   // flush wl_surface.enter into SDL's output list
+            toggle_fullscreen();
+        }
     }
 }
 
@@ -470,35 +484,10 @@ void Engine::toggle_fullscreen() {
     // This is preferable to SDL_WINDOW_FULLSCREEN which would actually switch
     // resolution and could disrupt the external monitor arrangement.
     Uint32 flags = m_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
-
-    // On Wayland, the compositor decides which output to fullscreen on based on
-    // where the window currently lives — it does NOT use the position we
-    // requested at creation time.  If the window hasn't been confirmed on the
-    // correct output yet (common when -f is passed at startup, before the
-    // compositor has acknowledged the initial placement), labwc defaults to the
-    // primary output.
-    //
-    // Fix: explicitly move the window into m_display_index's bounds and flush
-    // compositor events BEFORE sending the fullscreen request.  This forces the
-    // output mapping to be confirmed, so xdg_toplevel_set_fullscreen carries the
-    // right wl_output instead of NULL.  On X11 this is a no-op but harmless.
-    if (m_fullscreen) {
-        SDL_Rect bounds;
-        if (SDL_GetDisplayBounds(m_display_index, &bounds) == 0) {
-            // Use logical window size (not drawable px) — SDL_SetWindowPosition
-            // works in logical coordinates, same unit as SDL_CreateWindow.
-            int win_w, win_h;
-            SDL_GetWindowSize(m_window, &win_w, &win_h);
-            SDL_SetWindowPosition(m_window,
-                bounds.x + (bounds.w - win_w) / 2,
-                bounds.y + (bounds.h - win_h) / 2);
-            SDL_PumpEvents();   // let the compositor register the move
-        }
-    }
-
     SDL_SetWindowFullscreen(m_window, flags);
 
-    // Pump again to collect the resize event from the fullscreen transition.
+    // Pump events so SDL collects the window resize notification that the
+    // fullscreen transition triggers before we query the new drawable size.
     SDL_PumpEvents();
 
     // Update the viewport, renderer FBOs, and Lua screen globals together.
@@ -508,6 +497,23 @@ void Engine::toggle_fullscreen() {
     glViewport(0, 0, m_draw_w, m_draw_h);
     m_renderer.set_size(m_draw_w, m_draw_h);
     m_lua.set_screen_size(m_draw_w, m_draw_h);
+}
+
+// ── request_fullscreen() ─────────────────────────────────────────────────────
+//
+// Called from main() when -f is passed.  We do NOT call toggle_fullscreen()
+// directly here because on Wayland the compositor sends wl_surface.enter
+// (telling SDL which output the window is on) only AFTER the window's first
+// frame has been composited.  Calling fullscreen before that event arrives
+// means SDL passes NULL for the wl_output in xdg_toplevel_set_fullscreen,
+// and the compositor picks display 0 regardless of where the window was placed.
+//
+// Setting this flag instead defers the call to run(), where it fires
+// after the first SDL_GL_SwapWindow — at which point vsync guarantees the
+// compositor has already processed our frame and sent wl_surface.enter.
+
+void Engine::request_fullscreen() {
+    m_pending_fullscreen = true;
 }
 
 // ── setup_triangle() ─────────────────────────────────────────────────────────
