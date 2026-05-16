@@ -470,13 +470,35 @@ void Engine::toggle_fullscreen() {
     // This is preferable to SDL_WINDOW_FULLSCREEN which would actually switch
     // resolution and could disrupt the external monitor arrangement.
     Uint32 flags = m_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+
+    // On Wayland, the compositor decides which output to fullscreen on based on
+    // where the window currently lives — it does NOT use the position we
+    // requested at creation time.  If the window hasn't been confirmed on the
+    // correct output yet (common when -f is passed at startup, before the
+    // compositor has acknowledged the initial placement), labwc defaults to the
+    // primary output.
+    //
+    // Fix: explicitly move the window into m_display_index's bounds and flush
+    // compositor events BEFORE sending the fullscreen request.  This forces the
+    // output mapping to be confirmed, so xdg_toplevel_set_fullscreen carries the
+    // right wl_output instead of NULL.  On X11 this is a no-op but harmless.
+    if (m_fullscreen) {
+        SDL_Rect bounds;
+        if (SDL_GetDisplayBounds(m_display_index, &bounds) == 0) {
+            // Use logical window size (not drawable px) — SDL_SetWindowPosition
+            // works in logical coordinates, same unit as SDL_CreateWindow.
+            int win_w, win_h;
+            SDL_GetWindowSize(m_window, &win_w, &win_h);
+            SDL_SetWindowPosition(m_window,
+                bounds.x + (bounds.w - win_w) / 2,
+                bounds.y + (bounds.h - win_h) / 2);
+            SDL_PumpEvents();   // let the compositor register the move
+        }
+    }
+
     SDL_SetWindowFullscreen(m_window, flags);
 
-    // SDL_PumpEvents forces SDL to collect pending OS events (including the
-    // window resize notification from the fullscreen transition) before we
-    // query the new drawable size.  Without this, SDL_GL_GetDrawableSize can
-    // return stale dimensions on macOS because the OS resize hasn't been
-    // acknowledged yet.
+    // Pump again to collect the resize event from the fullscreen transition.
     SDL_PumpEvents();
 
     // Update the viewport, renderer FBOs, and Lua screen globals together.
