@@ -2,6 +2,7 @@
 #include <glad/glad.h>
 
 #include "lua_bindings.h"
+#include "lua_easing.h"
 #include "lua_automata.h"
 #include "lua_noise.h"
 #include "lua_image.h"
@@ -263,6 +264,9 @@ void lua_bindings::register_all(lua_State* L) {
     lua_register(L, "shader_add",          l_shader_add);
     lua_register(L, "shader_clear",        l_shader_clear);
     lua_register(L, "shader_set_uniform",  l_shader_set_uniform);
+
+    // Easing and utility math (lerp, smooth, smooth_hl, map, clamp, smoothstep, pulse)
+    lua_easing::register_all(L);
 
     // Cellular automata (wolfram and conway global tables)
     lua_automata::register_all(L);

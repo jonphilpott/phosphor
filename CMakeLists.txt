@@ -61,6 +61,7 @@ add_executable(phosphor
     src/lua_waveform.cpp
     src/lua_3d.cpp
     src/lua_text.cpp
+    src/lua_easing.cpp
     src/stb_image_impl.cpp
     src/renderer.cpp
     src/shader_pipeline.cpp

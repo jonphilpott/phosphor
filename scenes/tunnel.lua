@@ -214,7 +214,7 @@ function on_osc(addr, ...)
         cg = args[2] or cg
         cb = args[3] or cb
     elseif addr == "/speed" then
-        speed = math.max(0.5, math.min(15.0, args[1] or speed))
+        speed = clamp(args[1] or speed, 0.5, 15.0)
     elseif addr == "/left"  then yaw_v   = yaw_v   - 0.15; rebuild_ahead()
     elseif addr == "/right" then yaw_v   = yaw_v   + 0.15; rebuild_ahead()
     elseif addr == "/up"    then pitch_v = pitch_v + 0.12; rebuild_ahead()

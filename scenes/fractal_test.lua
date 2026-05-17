@@ -94,7 +94,7 @@ function on_frame(dt)
 
     -- Zoom lerps from zoom_start to zoom_end over the phase.
     local zoom = zoom_override
-              or (p.zoom_start + (p.zoom_end - p.zoom_start) * frac)
+              or lerp(p.zoom_start, p.zoom_end, frac)
 
     -- Color shift drifts continuously across phases so there's no seam.
     local color_shift = t * (p.color_speed or 0.04)

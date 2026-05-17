@@ -171,13 +171,13 @@ function on_frame(dt)
         for x = 0, cols - 1 do
             if state[yc_off + x + 1] == 1 then
                 local a = age[yc_off + x + 1]
-                local t = math.min(a / 8.0, 1.0)
+                local t = clamp(a / 8.0, 0, 1)
 
-                -- Linear interpolation from white (1,1,1) to base colour.
+                -- lerp() from white (1,1,1) to base colour.
                 -- At t=0 all channels are 1.0 (white); at t=1 they equal base.
-                set_color(1.0 + (base_r - 1.0) * t,
-                          1.0 + (base_g - 1.0) * t,
-                          1.0 + (base_b - 1.0) * t, 1)
+                set_color(lerp(1.0, base_r, t),
+                          lerp(1.0, base_g, t),
+                          lerp(1.0, base_b, t), 1)
 
                 -- Leave a 1-pixel gap so individual cells are visually distinct.
                 draw_rect(x * CELL, py, CELL - 1, CELL - 1)
