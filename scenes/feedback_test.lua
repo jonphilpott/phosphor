@@ -19,7 +19,7 @@ function on_frame(dt)
     -- Blend the previous frame's image at 97% alpha over the cleared FBO.
     -- (begin_frame() already cleared the FBO to black, so areas with no
     -- feedback content will simply remain black.)
-    draw_feedback(0.99, 1.0, 0.0)
+    draw_feedback(0.99, 1.0, 0.001)
 
     -- Draw a new circle each frame at a random position.
     set_color(1, 1, 1, 1)
