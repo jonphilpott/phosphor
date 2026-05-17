@@ -180,6 +180,7 @@
   <a href="#shaders">Shader Pipeline</a>
   <a href="#custom-shaders">Custom Shaders</a>
   <a href="#noise">Noise Functions</a>
+  <a href="#easing">Easing &amp; Math</a>
   <a href="#wolfram">Wolfram 1D CA</a>
   <a href="#conway">Conway's Game of Life</a>
   <a href="#images">Images &amp; Sprites</a>
@@ -555,6 +556,84 @@ function on_frame(dt)
         end
     end
 end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="easing">
+<summary>Easing &amp; Math Utilities</summary>
+<div class="section-body">
+
+<p>Seven math primitives available as global functions in every scene — no <code>dofile</code> or <code>require</code> needed. They cover the most common animation and control-rate tasks: interpolation, frame-rate-independent smoothing, range mapping, and beat-sync pulses.</p>
+
+<h3>Interpolation</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>lerp(a, b, t)</code></td><td>Linear interpolation. Returns the value <code>t</code> of the way from <code>a</code> to <code>b</code>. <code>t=0</code> → <code>a</code>, <code>t=1</code> → <code>b</code>. Not clamped — pass <code>t</code> outside [0,1] to extrapolate.</td></tr>
+  <tr><td><code>smoothstep(t)</code></td><td>S-curve: maps <code>t</code> in [0,1] to [0,1] with zero derivative at both ends. Formula: <code>3t²−2t³</code>. Input is clamped automatically. Use this instead of <code>lerp</code> when you want eased start and end rather than a linear ramp.</td></tr>
+</table>
+
+<h3>Exponential smoothing</h3>
+<p>Both functions move a value toward a target in a frame-rate-independent way — unlike <code>lerp(current, target, k)</code> called each frame, which moves twice as far at 30 fps as at 60 fps.</p>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>smooth(current, target, rate, dt)</code></td><td>Rate-based smoother. Each frame the remaining gap is multiplied by <code>e<sup>−rate·dt</sup></code>. Higher <code>rate</code> = snappier response. Rule of thumb: rate 1 ≈ 63% of gap closed per second; rate 5 ≈ 99%; rate 10 ≈ nearly instant.</td></tr>
+  <tr><td><code>smooth_hl(current, target, half_life, dt)</code></td><td>Half-life smoother. The gap halves every <code>half_life</code> seconds — more intuitive when thinking in musical time. <code>half_life = 0.1</code> is snappy; <code>2.0</code> is a lazy drift. Returns <code>target</code> immediately if <code>half_life ≤ 0</code>.</td></tr>
+</table>
+
+<h3>Range &amp; clamping</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>map(x, in_lo, in_hi, out_lo, out_hi)</code></td><td>Remaps <code>x</code> from [<code>in_lo</code>, <code>in_hi</code>] to [<code>out_lo</code>, <code>out_hi</code>]. Not clamped — use <code>clamp()</code> afterwards if you need hard limits. Typical use: converting OSC 0..1 values to pixel coordinates.</td></tr>
+  <tr><td><code>clamp(x, lo, hi)</code></td><td>Constrains <code>x</code> to [<code>lo</code>, <code>hi</code>]. Equivalent to <code>math.max(lo, math.min(hi, x))</code> but reads as intent rather than idiom.</td></tr>
+</table>
+
+<h3>Beat pulse</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>pulse(t, bpm, width)</code></td><td>Returns a 0..1 value that peaks at 1 on each beat and fades smoothly to 0 within <code>width</code> seconds of the beat. Good for flash and strobe effects driven by a time accumulator. <code>width</code> is the half-window in seconds — try 0.05–0.1 for a tight flash.</td></tr>
+</table>
+
+<h3>Choosing smooth() vs smooth_hl()</h3>
+<table>
+  <tr><th></th><th><code>smooth()</code></th><th><code>smooth_hl()</code></th></tr>
+  <tr><td>Parameter</td><td>rate (nepers/sec)</td><td>half_life (seconds)</td></tr>
+  <tr><td>Snappy</td><td>rate 10–20</td><td>half_life 0.05–0.1</td></tr>
+  <tr><td>Medium</td><td>rate 4–7</td><td>half_life 0.2–0.4</td></tr>
+  <tr><td>Lazy</td><td>rate 1–2</td><td>half_life 1.0–2.0</td></tr>
+  <tr><td>Best for</td><td>Control-rate intuition</td><td>Musical / tempo-relative intuition</td></tr>
+</table>
+
+<pre><code>local t    = 0
+local pos  = 0        -- current smoothed value
+local bpm  = 120
+
+function on_frame(dt)
+    t = t + dt
+
+    -- map(): OSC 0..1 → pixel x; clamp() guards against out-of-range input
+    local target = clamp(map(some_osc_value, 0, 1, 0, screen_width), 0, screen_width)
+
+    -- smooth(): snappy follow at rate 8
+    pos = smooth(pos, target, 8, dt)
+
+    -- smoothstep(): use distance to target as an eased size modulator
+    local dist_frac = clamp(map(math.abs(pos - target), 0, 400, 0, 1), 0, 1)
+    local radius    = lerp(10, 50, smoothstep(dist_frac))
+
+    -- pulse(): beat-sync flash — 120bpm, 70ms window
+    local flash = pulse(t, bpm, 0.07)
+    clear(flash * 0.1, flash * 0.07, flash * 0.03, 1)
+
+    set_color(0.3, 1.0, 0.5, 1)
+    draw_circle(pos, screen_height / 2, radius)
+end</code></pre>
+
+<div class="tip">
+  <strong>See also</strong>
+  <code>scenes/easing_demo.lua</code> — a live showcase scene that puts all seven functions on screen simultaneously: four dots chasing a drifting target at different smoothing rates, with a beat-sync background pulse and OSC control.
+</div>
 
 </div>
 </details>
@@ -1175,6 +1254,10 @@ r.stop;</code></pre>
   <tr>
     <td><code>osc_test.lua</code></td>
     <td>Live OSC control. Handles <code>/color r g b</code>, <code>/size n</code>, <code>/bang</code>. SuperCollider example in comments.</td>
+  </tr>
+  <tr>
+    <td><code>easing_demo.lua</code></td>
+    <td>Live showcase of all seven easing primitives: four dots chasing a drifting target at different smoothing rates (<code>smooth</code>, <code>smooth_hl</code>), with size and opacity driven by <code>lerp</code>, <code>smoothstep</code>, <code>map</code>, and <code>clamp</code>. Background flashes on the beat via <code>pulse</code>. OSC: <code>/target x y</code>, <code>/bpm</code>, <code>/trail</code>.</td>
   </tr>
   <tr>
     <td><code>datafield.lua</code></td>
