@@ -14,7 +14,7 @@
 --   /tape_vu   f  i   -- excite tape-position node i with amplitude f
 --   /scroll    dx dy  -- set scroll velocity in grid cells per second
 
-local NODE_BASE_RADIUS = 0
+local NODE_BASE_RADIUS = 2
 local NODE_SMOOTH_RATE = 5
 local GRID_SIZE        = 32
 local INFLUENCE_RATE   = 4   -- Hz; lower = slower, more distinct wave front
@@ -27,7 +27,6 @@ function make_node()
       r  = 1,                  -- current smoothed radius
       t  = NODE_BASE_RADIUS,   -- target radius
       c  = {0.8, 0.8, 0.8},   -- colour {r, g, b}
-      dn = "00",               -- display hex digit, updated each frame
    }
 
    -- Advance simulation state: smooth r toward target, reset when overshot.
@@ -35,7 +34,6 @@ function make_node()
    -- is ever updated more than once even at the scroll wrap seam.
    function n:update(dt)
       self.r  = smooth(self.r, self.t, NODE_SMOOTH_RATE, dt)
-      self.dn = string.format("%X", math.floor(self.r * 3))
       if self.r + 1 > self.t then
          self.t = NODE_BASE_RADIUS
       end
@@ -47,12 +45,13 @@ function make_node()
       local rad = self.r + 1
 
       if self.r < 4 then
-         local rc = 0.3+(math.random() * 0.05)
+         local rc = 0.6
          set_color(rc, rc, rc)
       else
          set_color(self.c[1], self.c[2], self.c[3])
       end
-      draw_text(0, 0, self.dn, clamp(rad * 0.2, 1, 1.2))
+
+      draw_rect(0,0,rad,rad)
    end
 
    -- Propose a peak target height.  Uses max() rather than addition so a node
