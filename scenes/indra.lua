@@ -14,19 +14,39 @@
 --   /tape_vu   f  i   -- excite tape-position node i with amplitude f
 --   /scroll    dx dy  -- set scroll velocity in grid cells per second
 
-local NODE_BASE_RADIUS = 2
+local NODE_BASE_RADIUS = 1
 local NODE_SMOOTH_RATE = 5
 local GRID_SIZE        = 32
 local INFLUENCE_RATE   = 4   -- Hz; lower = slower, more distinct wave front
+local TEXT_MODE        = false
 
+local INPUT_CELL       = {math.floor(GRID_SIZE/2), math.floor(GRID_SIZE/2)}
+local LINE_THRESHOLD   = 10   -- input node val() above which web lines are drawn
+
+local FEEDBACK_ALPHA_BASE = 0.5
+local FEEDBACK_SCALE_BASE = 0.5
+
+local feedback_alpha = 0
+local feedback_scale = 0
 
 -- ── Node ──────────────────────────────────────────────────────────────────────
+
+local CHARS = "!@#$%&*+=<>?|/\\"
+
+local function rand_char()
+    local i = math.random(1, #CHARS)
+    return string.sub(CHARS, i, i)   -- same index for both bounds = exactly one character
+end
+
 
 function make_node()
    local n = {
       r  = 1,                  -- current smoothed radius
       t  = NODE_BASE_RADIUS,   -- target radius
       c  = {0.8, 0.8, 0.8},   -- colour {r, g, b}
+      g  = rand_char(),
+      s  = 1.0,
+      input = false,
    }
 
    -- Advance simulation state: smooth r toward target, reset when overshot.
@@ -44,25 +64,37 @@ function make_node()
    function n:draw()
       local rad = self.r + 1
 
-      if self.r < 4 then
-         local rc = 0.6
+      if self.r < 4 and self.input == false then
+         local rc = 0.1
          set_color(rc, rc, rc)
       else
-         set_color(self.c[1], self.c[2], self.c[3])
+         set_color(self.c[1], self.c[2], self.c[3], 0.9)
       end
 
-      draw_rect(0,0,rad,rad)
+      if TEXT_MODE then
+         -- Each glyph is 8×8 at scale 1, so 8*sz × 8*sz at scale sz.
+         -- Offset by -4*sz so the character is centred on the node origin.
+         local sz = clamp(rad * 0.1, 1, 16) * self.s
+         draw_text(-4 * sz, -4 * sz, self.g, sz)
+      else
+         draw_rect(-rad/2,-rad/2,rad,rad)
+      end
    end
 
    -- Propose a peak target height.  Uses max() rather than addition so a node
    -- rises to the strongest influence it receives but can't accumulate higher
    -- than that — prevents runaway when multiple neighbours are excited.
    function n:target(it)
+      --self.g = rand_char()
       self.t = math.max(self.t, NODE_BASE_RADIUS + it)
    end
 
    function n:val()
       return self.r
+   end
+
+   function n:scale(s)
+      self.s = s
    end
 
    return n
@@ -127,9 +159,13 @@ function grid_influence()
                end
             end
          end
-         -- Small random noise seeds organic variation across the field;
-         -- the max() in target() ensures it can't cause runaway on its own.
-         grid[y][x]:target(neighbour_max + math.random() * 0.2)
+
+         -- randomize the influence so the fields aren't always so square
+         if math.random() > 0.33 then
+               -- Small random noise seeds organic variation across the field;
+               -- the max() in target() ensures it can't cause runaway on its own.
+               grid[y][x]:target(neighbour_max + math.random() * 0.2)
+         end
       end
    end
 end
@@ -138,8 +174,8 @@ end
 -- ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 function on_load()
-   shader_set("glitch", "chromatic_ab")
-   shader_set_uniform("u_glitch_amount", 0.1)
+   shader_set("glitch", "chromatic_ab", "scanlines")
+   shader_set_uniform("u_glitch_amount", 0.3)
 end
 
 function on_osc(addr, ...)
@@ -149,25 +185,37 @@ function on_osc(addr, ...)
       local pos = left_map[args[2]]
       local n   = grid[pos[1]][pos[2]]
       n.c = {0.0, 1.0, 1.0}
+      n.s = 2
+      n.input = true
       n:target(args[1] * 0.2)
 
    elseif addr == "/right_vu" then
       local pos = right_map[args[2]]
       local n   = grid[pos[1]][pos[2]]
       n.c = {0.0, 1.0, 0.0}
+      n.s = 2
+      n.input = true
       n:target(args[1] * 0.2)
 
    elseif addr == "/input_vu" then
-      local n = grid[math.floor(GRID_SIZE / 2)][math.floor(GRID_SIZE / 2)]
+      local n = grid[INPUT_CELL[1]][INPUT_CELL[2]]
       n.c = {1.0, 1.0, 0.0}
+      n.s = 2
+      n.input = true
       n:target(args[1] * 0.2)
 
    elseif addr == "/tape_vu" then
       local tape_pos = math.floor(args[2]) * 8
       local n        = grid[1][tape_pos]
       n.c = {1.0, 0.5, 0.2}
+      n.s = 2
+      n.input = true
       n:target(args[1] * 0.2)
 
+   elseif addr == "/feedback_alpha" then
+      feedback_alpha = (args[1] * 0.5) or feedback_alpha
+   elseif addr == "/feedback_scale" then
+      feedback_scale = (args[1] * 0.5) or feedback_scale
    elseif addr == "/scroll" then
       target_dx = args[1] or target_dx
       target_dy = args[2] or target_dy
@@ -180,7 +228,7 @@ function on_frame(dt)
    local W = screen_width
    local H = screen_height
 
-   draw_feedback(0.5, 0.9, 0.009)
+   draw_feedback(FEEDBACK_ALPHA_BASE + feedback_alpha, FEEDBACK_SCALE_BASE + feedback_scale, 0.005)
 
    -- ── Influence tick ────────────────────────────────────────────────────────
    influence_timer = influence_timer + dt
@@ -222,6 +270,32 @@ function on_frame(dt)
          scale(W / (GRID_SIZE * 18))
          grid[gy][gx]:draw()
          pop()
+      end
+   end
+
+   -- ── Input web ─────────────────────────────────────────────────────────────
+   -- When the input node is excited above LINE_THRESHOLD, draw lines from it
+   -- to every node in left_map.  Alpha scales with excitation level so the
+   -- web fades in rather than snapping on at the threshold.
+   local input_node = grid[INPUT_CELL[1]][INPUT_CELL[2]]
+   if input_node:val() > LINE_THRESHOLD then
+
+      -- Convert a {gy, gx} grid position to screen pixels using the current
+      -- scroll offset.  Modulo GRID_SIZE handles toroidal wrap correctly.
+      local function to_screen(pos)
+         local col = (pos[2] - 1 - cell_ox + GRID_SIZE) % GRID_SIZE
+         local row = (pos[1] - 1 - cell_oy + GRID_SIZE) % GRID_SIZE
+         return col * x_step + pixel_ox, row * y_step + pixel_oy
+      end
+
+      local alpha = clamp(map(input_node:val(), LINE_THRESHOLD, 20, 0, 0.7), 0, 0.7)
+      set_stroke(1, 1, 0.5, alpha)
+      set_stroke_weight(1.0)
+
+      local ix, iy = to_screen(INPUT_CELL)
+      for _, pos in ipairs(left_map) do
+         local lx, ly = to_screen(pos)
+         draw_line(ix, iy, lx, ly)
       end
    end
 end
