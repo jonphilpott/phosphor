@@ -211,6 +211,7 @@ cmake --build build</code></pre>
   <tr><td><code>-s &lt;path&gt;</code></td><td>Scene file to load</td><td>—</td></tr>
   <tr><td><code>-d &lt;n&gt;</code></td><td>Display index (0 = primary)</td><td>0</td></tr>
   <tr><td><code>-f</code></td><td>Start fullscreen</td><td>off</td></tr>
+  <tr><td><code>-p &lt;n&gt;</code></td><td>UDP port to listen for OSC on. If something else already holds the port (an OSC monitor such as Protokol, or a stray phosphor), the bind fails loudly at startup rather than silently sharing it &mdash; the kernel would deliver each datagram to only one listener.</td><td>9000</td></tr>
   <tr><td><code>--allow-remote-scene</code></td><td>Honour OSC <code>/scene</code> from other machines. Off by default — <code>/scene</code> executes a Lua file, so accepting it from the network lets anyone who can reach port 9000 run code. Scenes must still resolve inside the <code>-s</code> directory either way.</td><td>off</td></tr>
   <tr><td><code>-h</code></td><td>Print help and exit</td><td>—</td></tr>
 </table>

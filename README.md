@@ -41,6 +41,7 @@ The binary lands at `./build/phosphor`.
 | `-s <path>` | Scene file to load |
 | `-d <n>` | Display index (0 = primary) |
 | `-f` | Start fullscreen |
+| `-p <n>` | OSC UDP port (default 9000) |
 | `--allow-remote-scene` | Honour OSC `/scene` from other machines (off by default) |
 | `-h` | Print help and exit |
 
@@ -228,7 +229,13 @@ sheet:draw(frame_idx, x, y [, w, h [, angle]])
 
 ### OSC
 
-Listens on **UDP port 9000**. Multiple clients (SuperCollider, Pure Data, TouchOSC) work simultaneously.
+Listens on **UDP port 9000** (change with `-p`). Multiple clients (SuperCollider, Pure Data, TouchOSC) work simultaneously.
+
+If another program on the machine already holds the port — an OSC monitor such
+as Protokol, or a forgotten phosphor instance — the bind fails at startup with
+a message saying so, and phosphor runs on without OSC. It does **not** quietly
+share the port: the kernel would hand each datagram to only one listener, and
+losing every message with no error is a far worse way to find out.
 
 ```lua
 function on_osc(addr, ...)

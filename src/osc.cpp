@@ -56,12 +56,19 @@ bool OscServer::start(uint16_t port) {
     int yes = 1;
     setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
-    // SO_REUSEPORT allows multiple processes/sockets to bind the same port.
-    // Not strictly needed here but handy if you run multiple phosphor instances.
-    // It's not POSIX but is available on macOS and Linux 3.9+.
-#ifdef SO_REUSEPORT
-    setsockopt(m_socket, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
-#endif
+    // Deliberately NOT setting SO_REUSEPORT.
+    //
+    // SO_REUSEPORT lets several processes bind the same UDP port — but the
+    // kernel then delivers each datagram to exactly ONE of them, chosen by the
+    // kernel. So if anything else on the machine is already listening on this
+    // port (an OSC monitor such as Protokol, or a forgotten phosphor instance),
+    // our bind succeeds, we print "OSC listening", and messages then vanish
+    // into the other process with no error anywhere.
+    //
+    // Silently receiving nothing is the worst possible failure for a live
+    // control path: everything looks fine and the visuals just don't respond.
+    // Without the option, a clash fails the bind loudly at startup instead, and
+    // -p gives you another port to move to.
 
     // Step 3: Bind to all network interfaces (INADDR_ANY) on the given port.
     // This means we'll receive messages sent to any of our IP addresses —
@@ -73,6 +80,11 @@ bool OscServer::start(uint16_t port) {
 
     if (bind(m_socket, (sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("osc: bind()");
+        fprintf(stderr,
+                "osc: could not listen on UDP port %u — another program is "
+                "probably using it\n"
+                "     (an OSC monitor, or another phosphor instance).\n"
+                "     Close it, or start phosphor with -p <port>.\n", port);
         close(m_socket);
         m_socket = -1;
         return false;

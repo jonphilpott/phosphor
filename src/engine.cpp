@@ -162,11 +162,11 @@ bool Engine::init() {
     // Push drawable dimensions as Lua globals (screen_width, screen_height).
     m_lua.set_screen_size(m_draw_w, m_draw_h);
 
-    // Step 11: Start the OSC server on port 9000.
+    // Step 11: Start the OSC server (port 9000 unless -p said otherwise).
     // The server binds a UDP socket and spawns a recv thread.
     // All clients (SC, PD, TouchOSC) send to this same port simultaneously —
     // UDP is connectionless so there's no concept of "one connection per client".
-    if (!m_osc.start(9000)) {
+    if (!m_osc.start(m_osc_port)) {
         fprintf(stderr, "Warning: OSC server failed to start — continuing without OSC\n");
     }
 
@@ -564,7 +564,8 @@ void Engine::render_frame(float dt) {
             m_renderer.set_color(0.0f, 0.9f, 0.4f, 1.0f);
             text_render::draw(m_renderer, 24.0f, 24.0f,
                               "phosphor\n\nno scene loaded\n"
-                              "run with:  phosphor -s scenes/test.lua", 2.0f);
+                              "run with:  phosphor -s scenes/test.lua",
+                              text_scale_for_display());
         } else {
             // A scene was asked for but failed to load — typically a syntax
             // error just saved into the file being performed with. Put the last
@@ -612,13 +613,30 @@ void Engine::render_frame(float dt) {
     m_renderer.end_frame(&m_pipeline, m_time, m_beat);
 }
 
+// ── text_scale_for_display() ──────────────────────────────────────────────────
+// Glyph scale for engine-drawn messages, chosen so they occupy roughly the same
+// fraction of the screen whatever the drawable size — a 1280-wide window, a
+// 2560-wide Retina drawable and a projector should all read the same.
+
+float Engine::text_scale_for_display() const {
+    float scale = (float)m_draw_w / 640.0f;   // 2 at 1280 wide, 4 at 2560
+    if (scale < 1.0f) scale = 1.0f;
+    if (scale > 6.0f) scale = 6.0f;
+    return scale;
+}
+
 // ── draw_error_banner() ───────────────────────────────────────────────────────
 // Draws the Lua error across the top of the screen on a dark strip.
 // Wrapped by character count, since the font is fixed-width and every glyph is
 // exactly 8*scale pixels wide.
 
 void Engine::draw_error_banner(const std::string& msg) {
-    const float scale = 2.0f;
+    // Scale the font to the drawable rather than fixing it in pixels. The
+    // drawable is 2x the window on a Retina display and larger again on a
+    // projector, so a fixed scale that reads well on one is unreadable on the
+    // other — and this text exists precisely to be read at a glance from
+    // wherever you happen to be standing.
+    const float scale  = text_scale_for_display();
     const float char_w = 8.0f * scale;
     const float line_h = 8.0f * scale;
     const float pad    = 10.0f;

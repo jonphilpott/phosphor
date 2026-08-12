@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <ctime>
+#include <cstdint>
 #include "osc.h"
 #include "lua_state.h"
 #include "renderer.h"
@@ -26,6 +27,9 @@ public:
     void load_scene(const char* path);
     void toggle_fullscreen();
     void request_fullscreen();
+
+    // UDP port to listen for OSC on.  Call before init().
+    void set_osc_port(uint16_t port) { m_osc_port = port; }
 
     // Establish the directory that OSC-requested scenes must live under.
     // Pass the -s scene path (the root becomes its directory), or nullptr for
@@ -58,6 +62,9 @@ private:
     void  poll_hot_reload();                      // reload if the file changed
     void  render_frame(float dt);                 // run on_frame and present
 
+    // Glyph scale for engine-drawn text, proportional to the drawable size.
+    float text_scale_for_display() const;
+
     // Draw the current Lua error across the top of the screen.
     void  draw_error_banner(const std::string& msg);
 
@@ -77,6 +84,7 @@ private:
     int           m_draw_h     = 0;
 
     OscServer     m_osc;
+    uint16_t      m_osc_port = 9000;
     LuaState      m_lua;
     Renderer      m_renderer;
     ShaderPipeline m_pipeline;
