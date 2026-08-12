@@ -433,8 +433,9 @@ Neither mechanism consumes messages — everything still reaches `on_osc`.
 gives you a phase that advances continuously between them.
 
 ```lua
-bpm()  beat_phase()  bar_phase()  beat_count()
-beats_per_bar([n])   beat_active()   visual_latency([s])
+bpm([n])             -- get, or SET the tempo directly
+beat_phase()  bar_phase()  beat_count()
+beats_per_bar([n])   beat_active()   beat_reset()   visual_latency([s])
 
 env_trigger(name)          -- fire a named envelope
 env(name [, half_life])    -- read it, decaying 1 → 0
@@ -446,9 +447,16 @@ on("/kick", function() env_trigger("kick") end)
 local flash = env("kick", 0.12)
 ```
 
-Tempo uses the median of the last eight intervals, so one late UDP packet
-doesn't drag it. The clock free-runs if beats stop, and survives reload.
-Shaders get `u_beat_phase` alongside `u_beat`.
+`bpm(128)` sets the tempo directly, so `beat_phase()` and `bar_phase()` run with
+**no OSC source at all**. With a manual tempo, incoming `/beat` no longer changes
+the rate but still re-aligns the downbeat — the message says *where* the beat is,
+your scene says how fast. `bpm(0)` returns to inference. Changing tempo preserves
+the current phase, so it accelerates rather than snapping.
+
+Inferred tempo uses the median of the last eight intervals, so one late UDP
+packet doesn't drag it. The clock free-runs if beats stop — phase, beat count
+and bar position all keep advancing — and survives reload. Shaders get
+`u_beat_phase` alongside `u_beat`.
 
 **Engine-level address** (never forwarded to `on_osc`):
 

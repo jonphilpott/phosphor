@@ -23,18 +23,29 @@ constexpr int   HISTORY      = 8;
 constexpr double MIN_PERIOD  = 60.0 / 400.0;
 constexpr double MAX_PERIOD  = 60.0 / 20.0;
 
-// If no beat arrives for this long, the clock is considered stale: it keeps
-// free-running (so visuals do not freeze) but beat_active() reports false so a
-// scene can fall back to wall-clock animation.
+// If no beat arrives for this long, an inferred clock is considered stale: it
+// keeps free-running so the visuals do not freeze, but beat_active() reports
+// false so a scene can fall back to wall-clock animation. A manually set tempo
+// is never stale — it has no source to lose contact with.
 constexpr double STALE_AFTER = 4.0;
 
 struct Clock {
     double period       = 0.5;    // seconds per beat; 120 BPM until told otherwise
-    bool   have_tempo   = false;
+    bool   have_tempo   = false;  // inferred a tempo from /beat timings
+    double manual_bpm   = 0.0;    // non-zero: tempo set by the scene, not inferred
 
-    double last_beat_at = 0.0;    // wall time of the most recent /beat
+    double last_beat_at = 0.0;    // wall time of the most recent beat boundary
     double now          = 0.0;    // wall time as of this frame
-    long long beat_index = 0;     // beats counted since the first message
+    long long beat_index = 0;     // whole beats counted at the last beat boundary
+
+    // Is last_beat_at the time of a real /beat message, or an anchor we
+    // invented? Only the gap between two REAL beats measures anything. An
+    // anchor placed by startup, by a tempo change or by beat_reset() is at an
+    // arbitrary point in the bar, so treating the next gap as an interval
+    // feeds the estimator a number that means nothing — which showed up as a
+    // wild first reading (39 BPM from a 100 BPM source) before the median
+    // washed it out.
+    bool real_anchor = false;
 
     int    beats_per_bar = 4;
     double latency       = 0.0;   // seconds to shift visual timing by
@@ -58,38 +69,89 @@ double median_of(std::vector<double> v) {
     return v[mid];
 }
 
-// Position within the current beat, with the latency offset applied.
-double phase_now() {
+// ── The one quantity everything else is derived from ─────────────────────────
+//
+// Position on a continuous beat timeline: whole beats counted at the last beat
+// boundary, plus however far time has moved since, measured in beats.
+//
+// Deriving phase, count and bar position from a single continuous value is what
+// makes free-running work. Tracking them separately meant the beat *count* only
+// advanced when a message arrived, so with no source connected the bar position
+// was stuck cycling inside one beat slot and never swept the bar.
+double beat_pos() {
     if (g.period <= 0.0) return 0.0;
-    double p = (g.now + g.latency - g.last_beat_at) / g.period;
-    p -= std::floor(p);            // wrap into [0,1) and keep free-running
-    return p;
+    return (double)g.beat_index + (g.now + g.latency - g.last_beat_at) / g.period;
+}
+
+double frac(double v) { return v - std::floor(v); }
+
+// Change the period without moving the phase.
+//
+// Phase is computed backwards from last_beat_at, so changing the period alone
+// would make the current position jump. Re-anchoring keeps the visual exactly
+// where it is and only alters the rate from here on — so a tempo change mid-set
+// is a smooth acceleration rather than a snap.
+void set_period_preserving_phase(double new_period) {
+    if (new_period <= 0.0) return;
+    const double pos = beat_pos();
+    g.beat_index   = (long long)std::floor(pos);
+    g.period       = new_period;
+    g.last_beat_at = g.now + g.latency - frac(pos) * new_period;
+    g.real_anchor  = false;      // invented anchor — see Clock::real_anchor
 }
 
 // ── Lua API ───────────────────────────────────────────────────────────────────
 
+// bpm([n]) -> current tempo
+//
+// With no argument: the tempo in force — manually set if there is one, else
+// inferred from /beat, else 0 when nothing is known yet.
+//
+// With a number: set the tempo directly, so beat_phase() and bar_phase() run
+// without any OSC source at all. Useful for a tempo-synced piece that has no
+// clock to follow, or for pinning the tempo you already know while letting
+// /beat handle only the downbeat alignment.
+//
+// bpm(0) hands control back to inference from /beat.
 int l_bpm(lua_State* L) {
-    lua_pushnumber(L, g.have_tempo ? 60.0 / g.period : 0.0);
+    if (!lua_isnoneornil(L, 1)) {
+        const double n = luaL_checknumber(L, 1);
+
+        if (n <= 0.0) {
+            // Back to following the messages. The inferred period is whatever
+            // was last measured; if nothing has been measured the clock keeps
+            // free-running at its current rate until beats arrive.
+            g.manual_bpm = 0.0;
+        } else {
+            luaL_argcheck(L, n >= 1.0 && n <= 1000.0, 1, "bpm must be 1-1000");
+            g.manual_bpm = n;
+            set_period_preserving_phase(60.0 / n);
+        }
+    }
+
+    if (g.manual_bpm > 0.0)  lua_pushnumber(L, g.manual_bpm);
+    else if (g.have_tempo)   lua_pushnumber(L, 60.0 / g.period);
+    else                     lua_pushnumber(L, 0.0);
     return 1;
 }
 
 int l_beat_phase(lua_State* L) {
-    lua_pushnumber(L, phase_now());
+    lua_pushnumber(L, frac(beat_pos()));
     return 1;
 }
 
-// Position within the bar, [0,1). Combines the whole beats counted so far with
-// the fractional position inside the current one, so it advances smoothly
-// across the bar rather than stepping once per beat.
+// Position within the bar, [0,1). Derived from the same continuous position, so
+// it sweeps across the whole bar whether beats are arriving or the clock is
+// free-running.
 int l_bar_phase(lua_State* L) {
     const int bpb = g.beats_per_bar > 0 ? g.beats_per_bar : 4;
-    const double beats_in = (double)(g.beat_index % bpb) + phase_now();
-    lua_pushnumber(L, beats_in / (double)bpb);
+    lua_pushnumber(L, frac(beat_pos() / (double)bpb));
     return 1;
 }
 
+// Whole beats since the clock started. Advances while free-running too.
 int l_beat_count(lua_State* L) {
-    lua_pushinteger(L, (lua_Integer)g.beat_index);
+    lua_pushinteger(L, (lua_Integer)std::floor(beat_pos()));
     return 1;
 }
 
@@ -104,10 +166,12 @@ int l_beats_per_bar(lua_State* L) {
     return 1;
 }
 
-// True while beats are actually arriving. Lets a scene decide whether to follow
-// musical time or fall back to elapsed().
+// True when the clock means something: a tempo was set by hand, or beats are
+// actually arriving. Lets a scene decide whether to follow musical time or fall
+// back to elapsed().
 int l_beat_active(lua_State* L) {
-    lua_pushboolean(L, g.have_tempo && (g.now - g.last_beat_at) < STALE_AFTER);
+    const bool live = g.have_tempo && (g.now - g.last_beat_at) < STALE_AFTER;
+    lua_pushboolean(L, g.manual_bpm > 0.0 || live);
     return 1;
 }
 
@@ -121,6 +185,18 @@ int l_visual_latency(lua_State* L) {
     }
     lua_pushnumber(L, g.latency);
     return 1;
+}
+
+// beat_reset() — put the downbeat here.
+//
+// With a manual tempo and no /beat to align to, this is how a scene says "bar
+// starts now" — on a key, on an OSC message, or at the top of a section.
+int l_beat_reset(lua_State* L) {
+    (void)L;
+    g.beat_index   = 0;
+    g.last_beat_at = g.now + g.latency;
+    g.real_anchor  = false;
+    return 0;
 }
 
 // env_trigger(name) — start (or restart) a named envelope at full level.
@@ -160,34 +236,50 @@ void register_all(lua_State* L) {
     lua_register(L, "beat_count",     l_beat_count);
     lua_register(L, "beats_per_bar",  l_beats_per_bar);
     lua_register(L, "beat_active",    l_beat_active);
+    lua_register(L, "beat_reset",     l_beat_reset);
     lua_register(L, "visual_latency", l_visual_latency);
     lua_register(L, "env_trigger",    l_env_trigger);
     lua_register(L, "env",            l_env);
 }
 
 void on_beat(double wall_seconds) {
-    if (g.last_beat_at > 0.0) {
+    // Measure only between two real beats. The first beat after startup, after
+    // a tempo change or after beat_reset() has nothing meaningful to measure
+    // against, so it just becomes the new anchor.
+    if (g.real_anchor) {
         const double gap = wall_seconds - g.last_beat_at;
 
-        if (gap >= MIN_PERIOD && gap <= MAX_PERIOD) {
-            g.intervals.push_back(gap);
-            if ((int)g.intervals.size() > HISTORY) g.intervals.erase(g.intervals.begin());
-            g.period     = median_of(g.intervals);
-            g.have_tempo = true;
-        } else if (gap > MAX_PERIOD) {
-            // A long silence means the previous tempo estimate describes a
-            // different passage of music. Start gathering again rather than
-            // averaging across the gap.
-            g.intervals.clear();
-            g.have_tempo = false;
-        }
         // A gap shorter than MIN_PERIOD is a duplicate or a stray message:
         // ignored entirely, and deliberately does not advance the beat count.
         if (gap < MIN_PERIOD) return;
+
+        // With a manual tempo the period is the scene's to decide, so incoming
+        // beats are used only to re-align the downbeat — the message says
+        // *where* the beat is, the scene says how fast they go.
+        if (g.manual_bpm <= 0.0) {
+            if (gap <= MAX_PERIOD) {
+                g.intervals.push_back(gap);
+                if ((int)g.intervals.size() > HISTORY)
+                    g.intervals.erase(g.intervals.begin());
+                g.period     = median_of(g.intervals);
+                g.have_tempo = true;
+            } else {
+                // A long silence means the previous tempo estimate describes a
+                // different passage of music. Start gathering again rather than
+                // averaging across the gap.
+                g.intervals.clear();
+                g.have_tempo = false;
+            }
+        }
     }
 
+    // Snap the timeline to this beat. Taking the count from the free-running
+    // position rather than simply incrementing means a clock that has drifted
+    // over several missed beats resumes counting from where it actually is.
+    const double pos = beat_pos();
+    g.beat_index   = (long long)std::llround(pos);
     g.last_beat_at = wall_seconds;
-    g.beat_index++;
+    g.real_anchor  = true;
 }
 
 void update(double wall_seconds) {
@@ -195,6 +287,6 @@ void update(double wall_seconds) {
     if (g.last_beat_at == 0.0) g.last_beat_at = wall_seconds;  // first frame
 }
 
-float beat_phase() { return (float)phase_now(); }
+float beat_phase() { return (float)frac(beat_pos()); }
 
 }  // namespace lua_clock

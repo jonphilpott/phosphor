@@ -1463,14 +1463,31 @@ end</code></pre>
 
 <table>
   <tr><th>Function</th><th>Returns</th></tr>
-  <tr><td><code>bpm()</code></td><td>Inferred tempo, or 0 before enough beats have arrived.</td></tr>
+  <tr><td><code>bpm([n])</code></td><td>Get the tempo in force, or <strong>set it directly</strong>. Returns 0 when nothing is known yet. See below.</td></tr>
   <tr><td><code>beat_phase()</code></td><td>Position within the current beat, [0,1), advancing every frame.</td></tr>
   <tr><td><code>bar_phase()</code></td><td>Position within the bar, [0,1). Combines whole beats counted with the fraction through the current one, so it sweeps rather than steps.</td></tr>
   <tr><td><code>beat_count()</code></td><td>Beats since the first message.</td></tr>
   <tr><td><code>beats_per_bar([n])</code></td><td>Get, or set and get. Default 4.</td></tr>
   <tr><td><code>beat_active()</code></td><td>True while beats are actually arriving &mdash; use it to fall back to <code>elapsed()</code> when the clock goes quiet.</td></tr>
+  <tr><td><code>beat_reset()</code></td><td>Put the downbeat here &mdash; the bar starts now. How a scene with a manual tempo says where &ldquo;one&rdquo; is.</td></tr>
   <tr><td><code>visual_latency([s])</code></td><td>Shift visual timing to compensate for projector or capture delay.</td></tr>
 </table>
+
+<h3>Setting the tempo yourself</h3>
+<p><code>bpm(n)</code> sets the tempo directly, so <code>beat_phase()</code> and <code>bar_phase()</code> run <strong>with no OSC source at all</strong> &mdash; for a tempo-synced piece with no clock to follow, or when you already know the tempo and would rather state it than have it inferred.</p>
+
+<pre><code>function on_load()
+    bpm(128)              -- runs from here whether or not anything is connected
+    beats_per_bar(4)
+end
+
+function on_frame(dt)
+    rotate(bar_phase() * math.pi * 2)
+end</code></pre>
+
+<p>With a manual tempo set, incoming <code>/beat</code> messages no longer change the rate &mdash; but they still <strong>re-align the downbeat</strong>. That combination is useful in itself: the message says <em>where</em> the beat is, your scene says how fast the beats go. <code>bpm(0)</code> hands the rate back to inference.</p>
+
+<p>Changing tempo does not move the phase. The clock is re-anchored so the current position is preserved and only the rate changes from that point, making a tempo change a smooth acceleration rather than a visible snap.</p>
 
 <pre><code>rotate(bar_phase() * math.pi * 2)          -- exactly one turn per bar
 local pulse = 1.0 - beat_phase()           -- ramp down across each beat
@@ -1496,7 +1513,9 @@ end</code></pre>
 <h3>How the tempo is inferred</h3>
 <p>The gaps between the last eight <code>/beat</code> messages are taken and the <strong>median</strong> used, not the mean &mdash; messages arrive over UDP on a machine also doing graphics, so one being 30ms late is normal, and a median ignores a minority of bad samples entirely where a mean would be dragged by every one of them. Gaps outside 20&ndash;400&nbsp;BPM are rejected as noise; a very long gap clears the estimate rather than averaging across a silence.</p>
 
-<p>The clock <strong>free-runs</strong> at the inferred tempo, so a dropped packet does not stall the visuals &mdash; the phase keeps advancing and re-syncs when the next beat lands. Tempo and phase live outside the Lua VM, so saving a scene mid-set does not restart the clock.</p>
+<p>The clock <strong>free-runs</strong> at the tempo in force, so a dropped packet does not stall the visuals &mdash; phase, beat count and bar position all keep advancing and re-sync when the next beat lands. Tempo and phase live outside the Lua VM, so saving a scene mid-set does not restart the clock.</p>
+
+<p>Only the gap between two <em>real</em> beats is measured. The first beat after startup, after a tempo change or after <code>beat_reset()</code> is measured against an anchor placed at an arbitrary point in the bar, so it is used to align the clock but contributes nothing to the tempo estimate.</p>
 
 <p>Shaders receive the continuous phase as <code>uniform float u_beat_phase</code>, alongside the raw <code>u_beat</code> value.</p>
 
