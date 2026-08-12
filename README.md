@@ -76,9 +76,29 @@ function on_osc(addr, ...)
 end
 ```
 
-Built-in globals: `screen_width`, `screen_height` (updated on resize and fullscreen toggle), and `elapsed()` for seconds since startup — the same clock shaders get as `u_time`.
+Built-in globals: `screen_width`, `screen_height` (updated on resize and fullscreen toggle), `elapsed()` for seconds since startup — the same clock shaders get as `u_time` — and `persist`, a table that survives hot reload.
 
 **Hot reload:** save the file while Phosphor is running — the Lua VM reloads automatically. GPU state is untouched. Fragment shaders in `shaders/` reload too, recompiling in place; if one fails to compile the previous version keeps running.
+
+**State across reloads:** a reload rebuilds the Lua VM, so a scene normally
+restarts from nothing on every save. Anything in the global `persist` table
+survives instead — create it only if it isn't already there:
+
+```lua
+function on_load()
+    if not persist.particles then
+        persist.particles = {}      -- built once, kept across every reload
+        for i = 1, 300 do
+            persist.particles[i] = { pos = vec(0, 0), vel = vec.random(50) }
+        end
+    end
+    persist.t = persist.t or 0
+end
+```
+
+Numbers, strings, booleans, vectors and nested tables of those cross. Functions
+and the resource-owning userdata types (canvas, image, sprite_sheet, conway,
+wolfram) cannot — they're dropped and reported rather than vanishing quietly.
 
 **Errors don't stop the show:** a runtime error in `on_frame` holds the last good frame on screen and prints the message over it rather than going black, and throttles the log to once a second. Fix the file and the next clean frame clears it.
 
@@ -132,6 +152,76 @@ local label = "SIGNAL LOST"
 set_color(1, 0.3, 0.2, 1)
 draw_text(screen_width / 2 - text_width(label, 2) / 2, 100, label, 2)
 ```
+
+### Vectors
+
+A 2D vector type in the spirit of Processing's `PVector`, implemented in C.
+
+```lua
+vec(x, y)                         -- also vec.new(x, y)
+vec.from_angle(a [, len])
+vec.random([len])
+
+v.x, v.y                          -- readable and writable
+a + b   a - b   -a                -- component-wise
+v * 2   2 * v   v / 2             -- scalar
+a * b   a / b                     -- component-wise (use a:dot(b) for dot product)
+
+v:mag()  v:mag_sq()  v:dist(u)  v:dist_sq(u)
+v:dot(u) v:cross(u)  v:heading()  v:angle_to(u)  v:xy()
+```
+
+Transformations come in two forms. Plain names return a **new** vector; a
+trailing underscore **modifies in place** and returns the vector, so calls chain:
+
+```lua
+v:normalize()   v:limit(m)   v:rotate(a)   v:lerp(u, t)
+v:normalize_()  v:limit_(m)  v:rotate_(a)  v:lerp_(u, t)
+v:set_(u)  v:add_(u)  v:sub_(u)  v:scale_(s)
+
+v:smooth(target, rate, dt)        -- frame-rate independent chase
+v:smooth_hl(target, half_life, dt)
+```
+
+`smooth` is the one worth knowing — anything that follows something else wants
+it, and unlike a per-frame `lerp` it behaves the same at 30fps and 144fps.
+
+Every operator allocates a new vector. That's the right default; for a loop
+doing thousands of operations a frame, the in-place forms allocate nothing:
+
+```lua
+-- readable
+local steer = (target - p.pos):normalize() * FORCE * dt
+p.vel = (p.vel + steer):limit(MAX_SPEED)
+
+-- allocation-free, one scratch vector reused across all particles
+steer:set_(target):sub_(p.pos):normalize_():scale_(FORCE * dt)
+p.vel:add_(steer):limit_(MAX_SPEED)
+p.pos:add_(p.vel.x * dt, p.vel.y * dt)
+```
+
+Anywhere a vector is accepted, two numbers work too: `p:add_(0, 9.8)`.
+Vectors survive hot reload, so a field of them can live in `persist`.
+See `scenes/vector_test.lua`.
+
+### HSV Colour
+
+```lua
+hsv(h, s, v [, a])                -- returns r, g, b, a
+set_color_hsv(h, s, v [, a])
+set_stroke_hsv(h, s, v [, a])
+```
+
+All components are 0..1 (hue is **not** in degrees), and hue **wraps** — so you
+can feed an ever-increasing number straight in:
+
+```lua
+set_color(hsv(elapsed() * 0.1, 0.9, 1))   -- hue cycling on the engine clock
+clear(hsv(0.6, 0.4, 0.12))
+```
+
+Because `hsv()` returns four values it must be the last argument — pass alpha to
+`hsv` itself rather than after it.
 
 ### Easing & Math
 

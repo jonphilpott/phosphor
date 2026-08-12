@@ -1,5 +1,6 @@
 #include "lua_state.h"
 #include "lua_bindings.h"
+#include "lua_persist.h"
 #include <cstdio>
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
@@ -47,6 +48,11 @@ bool LuaState::init() {
     // Register all engine-provided C functions as Lua globals.
     // The actual functions live in lua_bindings.cpp to keep this file clean.
     lua_bindings::register_all(L);
+
+    // Always provide an empty `persist` table so scenes can assign into it
+    // without a nil check. reload_scene() overwrites it with the carried-over
+    // contents immediately after this, before the scene file runs.
+    lua_persist::install(L);
 
     printf("Lua %s ready\n", LUA_RELEASE);
     return true;

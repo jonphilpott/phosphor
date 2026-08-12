@@ -54,6 +54,7 @@ add_executable(phosphor
     src/osc.cpp
     src/osc_parse.cpp
     src/lua_state.cpp
+    src/lua_persist.cpp
     src/lua_bindings.cpp
     src/lua_automata.cpp
     src/lua_noise.cpp
@@ -62,6 +63,7 @@ add_executable(phosphor
     src/lua_waveform.cpp
     src/lua_3d.cpp
     src/lua_text.cpp
+    src/lua_vec.cpp
     src/lua_easing.cpp
     src/stb_image_impl.cpp
     src/renderer.cpp

@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "lua_bindings.h"
 #include "lua_text.h"   // text_render::draw — for the "no scene loaded" message
+#include "lua_persist.h"
 #include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
@@ -214,6 +215,13 @@ void Engine::load_scene(const char* path) {
 void Engine::reload_scene() {
     printf("[hot reload] %s\n", m_scene_path.c_str());
 
+    // Step 0: Carry the scene's `persist` table across the VM swap.
+    //
+    // This must happen before reset(), because reset() closes the VM and takes
+    // every Lua value with it. Capturing copies the table into plain C++ data
+    // that outlives the state it came from.
+    lua_persist::Snapshot carried = lua_persist::capture(m_lua.L);
+
     // Step 1: Tear down the Lua VM and create a fresh one.
     // reset() calls lua_close (running __gc on all live userdata — freeing any
     // canvas FBOs or image textures the scene allocated) then calls init().
@@ -234,6 +242,12 @@ void Engine::reload_scene() {
     lua_bindings::set_renderer(m_lua.L, &m_renderer);
     lua_bindings::set_pipeline(m_lua.L, &m_pipeline);
     m_lua.set_screen_size(m_draw_w, m_draw_h);
+
+    // Step 2b: Put `persist` back before the scene file runs, so top-level
+    // scene code and on_load() both see the state that was carried over.
+    lua_persist::restore(m_lua.L, carried);
+    const std::string losses = lua_persist::describe_losses(carried);
+    if (!losses.empty()) fprintf(stderr, "%s\n", losses.c_str());
 
     // Step 3: Reload the scene file.
     m_has_scene = false;

@@ -182,6 +182,7 @@
   <a href="#custom-shaders">Custom Shaders</a>
   <a href="#noise">Noise Functions</a>
   <a href="#easing">Easing &amp; Math</a>
+  <a href="#vectors">Vectors</a>
   <a href="#wolfram">Wolfram 1D CA</a>
   <a href="#conway">Conway's Game of Life</a>
   <a href="#images">Images &amp; Sprites</a>
@@ -240,6 +241,7 @@ cmake --build build</code></pre>
   <tr><th>Name</th><th>Type</th><th>Description</th></tr>
   <tr><td><code>screen_width</code></td><td>integer</td><td>Drawable width in pixels (Retina-aware). Updated on resize and fullscreen toggle.</td></tr>
   <tr><td><code>screen_height</code></td><td>integer</td><td>Drawable height in pixels.</td></tr>
+  <tr><td><code>persist</code></td><td>table</td><td>A table whose contents survive a hot reload &mdash; see <a href="#anatomy">Hot reload</a> below. Empty on first run.</td></tr>
   <tr><td><code>elapsed()</code></td><td>function &rarr; number</td><td>Seconds since startup &mdash; the same clock the engine sends to shaders as <code>u_time</code>, so Lua and shader animation stay in step. Responds to pause and the time-scale keys, which a scene&rsquo;s own <code>t = t + dt</code> accumulator does not.</td></tr>
 </table>
 
@@ -263,6 +265,39 @@ end</code></pre>
 <p>Save the scene file while Phosphor is running &mdash; changes appear within ~200&nbsp;ms. The Lua VM is torn down and rebuilt; GPU state (renderer and FBOs) is untouched. <code>on_load()</code> is called again after reload. The post-process shader chain is reset on reload, so a scene always starts from the pipeline its own <code>on_load</code> asks for rather than inheriting the previous scene&rsquo;s.</p>
 
 <p>Fragment shaders hot-reload too: save a file in <code>shaders/</code> and the loaded programs recompile in place within ~250&nbsp;ms, including the ones canvases own. If the edited source fails to compile, the previous program keeps running and the GLSL error is printed &mdash; a typo mid-set doesn&rsquo;t drop the pass.</p>
+
+<h3>Keeping state across a reload</h3>
+<p>Reloading destroys the whole Lua VM, which is what makes it reliable &mdash; no stale globals, no half-updated closures. It also means a scene normally restarts from nothing on every save: a clock accumulating <code>t = t + dt</code> returns to zero, a particle field is rebuilt, a Game of Life grid that had been running for ten minutes is gone.</p>
+
+<p>Anything stored in the global <code>persist</code> table survives instead. The idiom is to create state only if it is not already there:</p>
+
+<pre><code>function on_load()
+    -- Runs on the first load; skipped on every reload after it, because
+    -- persist.particles already exists.
+    if not persist.particles then
+        persist.particles = {}
+        for i = 1, 300 do
+            persist.particles[i] = { pos = vec(0, 0), vel = vec.random(50) }
+        end
+    end
+    persist.t = persist.t or 0
+end
+
+function on_frame(dt)
+    persist.t = persist.t + dt      -- keeps counting across saves
+end</code></pre>
+
+<p>Now you can edit the drawing code, the forces, the colours &mdash; and the simulation carries on mid-flight instead of starting over. <code>scenes/vector_test.lua</code> is built around this; edit any constant in it while it runs.</p>
+
+<h4>What can and cannot cross</h4>
+<table>
+  <tr><th>Crosses</th><th>Does not</th></tr>
+  <tr>
+    <td>Numbers (integer and float subtypes preserved), strings, booleans, vectors, and tables of those, nested up to 16 deep.</td>
+    <td>Functions, coroutines, and every userdata except <code>vec</code> &mdash; canvases, images, sprite sheets, <code>conway</code> and <code>wolfram</code> objects. These own GPU textures, framebuffers or C buffers that are freed when the VM closes, so there is nothing honest to carry across.</td>
+  </tr>
+</table>
+<p>Anything that cannot cross is dropped and reported on stderr rather than disappearing silently. Table cycles (<code>persist.a.self = persist.a</code>) are detected and dropped too. If you want an automaton&rsquo;s grid to survive, copy it into a plain table with the <code>get</code>/<code>set</code> methods those types already provide.</p>
 
 <h3>When a scene errors</h3>
 <p>A runtime error in <code>on_frame</code> does not black out the window. The half-drawn frame is discarded, the last complete frame is put back up, and the error message is drawn across the top of the screen. Logging is throttled to once a second so the terminal stays readable. Fix the file, save, and the next good frame clears the banner. The same applies to a syntax error saved into the scene: the visuals hold on the last good frame while you sort it out.</p>
@@ -292,6 +327,38 @@ end</code></pre>
   <tr><td><code>set_stroke_weight(w)</code></td><td>Line thickness / point size in pixels</td><td>1.0</td></tr>
   <tr><td><code>set_circle_segments(n)</code></td><td>Tessellation for <code>draw_circle</code></td><td>32</td></tr>
 </table>
+
+<h3>HSV colour</h3>
+<p>RGB is how the hardware thinks; hue/saturation/value is how visuals think. &ldquo;Rotate the hue over time&rdquo; is one number going up in HSV, and an awkward three-channel dance in RGB.</p>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>hsv(h, s, v [, a])</code></td><td>Returns <code>r, g, b, a</code> &mdash; four values, so it drops straight into anything that takes a colour.</td></tr>
+  <tr><td><code>set_color_hsv(h, s, v [, a])</code></td><td>Shorthand for <code>set_color(hsv(...))</code>.</td></tr>
+  <tr><td><code>set_stroke_hsv(h, s, v [, a])</code></td><td>Shorthand for <code>set_stroke(hsv(...))</code>.</td></tr>
+</table>
+<p>All components are <strong>0..1</strong>, matching every other colour call in the engine &mdash; hue is not in degrees. Hue <strong>wraps</strong>, so <code>h = 1.25</code> and <code>h = 0.25</code> are the same colour and you can feed an ever-increasing number straight in without wrapping it yourself. Saturation 0 gives grey at brightness <code>v</code>.</p>
+
+<pre><code>-- Hue cycling on the engine clock
+set_color(hsv(elapsed() * 0.1, 0.9, 1))
+draw_circle(cx, cy, 60)
+
+-- A whole palette from one loop
+for i = 0, 7 do
+    set_color_hsv(i / 8, 0.85, 1)
+    draw_rect(i * 60, 20, 50, 50)
+end
+
+-- hsv() composes with clear() too
+clear(hsv(0.6, 0.4, 0.12))</code></pre>
+
+<div class="note">
+  <strong>Expansion rule</strong>
+  <code>hsv()</code> returns four values, and Lua keeps all of them only in the
+  last argument position. <code>set_color(hsv(h, 1, 1))</code> is fine.
+  <code>set_color(hsv(h, 1, 1), 0.5)</code> is not &mdash; that passes only the
+  red channel and then 0.5. Pass alpha to <code>hsv</code> itself:
+  <code>hsv(h, 1, 1, 0.5)</code>.
+</div>
 
 <h3>Blend mode</h3>
 <p><code>set_blend(mode)</code> controls how new pixels combine with what is already on screen. It resets to <code>"alpha"</code> at the start of every frame, like the colour registers, so a scene that wants another mode asks for it each frame.</p>
@@ -726,6 +793,92 @@ end</code></pre>
   <strong>See also</strong>
   <code>scenes/easing_demo.lua</code> — a live showcase scene that puts all seven functions on screen simultaneously: four dots chasing a drifting target at different smoothing rates, with a beat-sync background pulse and OSC control.
 </div>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="vectors">
+<summary>Vectors</summary>
+<div class="section-body">
+
+<p>A 2D vector type in the spirit of Processing&rsquo;s <code>PVector</code>, implemented in C as userdata. Positions, velocities, forces and directions are the natural unit of animation, and writing them as pairs of loose <code>x</code>/<code>y</code> numbers is where most scene code goes to die.</p>
+
+<h3>Construction</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>vec(x, y)</code></td><td>A vector. Both components default to 0, so <code>vec()</code> is the origin.</td></tr>
+  <tr><td><code>vec.new(x, y)</code></td><td>Identical &mdash; <code>vec(...)</code> is shorthand for it.</td></tr>
+  <tr><td><code>vec.from_angle(a [, len])</code></td><td>Unit vector at angle <code>a</code> radians, scaled to <code>len</code> (default 1).</td></tr>
+  <tr><td><code>vec.random([len])</code></td><td>Uniformly distributed random direction, length <code>len</code> (default 1). Uses <code>math.random</code>, so <code>math.randomseed</code> makes it reproducible.</td></tr>
+</table>
+
+<p><code>v.x</code> and <code>v.y</code> are readable and writable. Assigning any other field is an error rather than silently doing nothing, which catches typos immediately.</p>
+
+<h3>Operators</h3>
+<table>
+  <tr><th>Expression</th><th>Result</th></tr>
+  <tr><td><code>a + b</code>, <code>a - b</code>, <code>-a</code></td><td>Component-wise, new vector.</td></tr>
+  <tr><td><code>v * 2</code>, <code>2 * v</code>, <code>v / 2</code></td><td>Scalar multiply and divide.</td></tr>
+  <tr><td><code>a * b</code>, <code>a / b</code></td><td><strong>Component-wise</strong>, not the dot product. Useful for non-uniform scaling: <code>p * vec(screen_width, screen_height)</code> maps a 0..1 position onto the screen. For the dot product use <code>a:dot(b)</code>.</td></tr>
+  <tr><td><code>a == b</code></td><td>Exact component equality. Two vectors reached by different routes can differ in the last bit; compare <code>a:dist(b)</code> against a tolerance when that matters.</td></tr>
+</table>
+
+<h3>Queries &mdash; return numbers</h3>
+<table>
+  <tr><th>Method</th><th>Returns</th></tr>
+  <tr><td><code>v:mag()</code> / <code>v:mag_sq()</code></td><td>Length, and length squared. Prefer the squared form when only comparing distances &mdash; same ordering, no square root.</td></tr>
+  <tr><td><code>v:dist(u)</code> / <code>v:dist_sq(u)</code></td><td>Distance to another point.</td></tr>
+  <tr><td><code>v:dot(u)</code></td><td>Dot product. Zero when perpendicular.</td></tr>
+  <tr><td><code>v:cross(u)</code></td><td>2D cross product (a scalar). Its <em>sign</em> tells you which side <code>u</code> lies on &mdash; the basis of steering left or right.</td></tr>
+  <tr><td><code>v:heading()</code></td><td>Angle in radians, from +X.</td></tr>
+  <tr><td><code>v:angle_to(u)</code></td><td>Signed angle between the two, in [&minus;&pi;, &pi;].</td></tr>
+  <tr><td><code>v:xy()</code></td><td>The components as two values.</td></tr>
+</table>
+
+<h3>Transformations</h3>
+<p>Every operation comes in two forms. Without a trailing underscore it returns a <strong>new</strong> vector and leaves the receiver alone; with one it <strong>modifies</strong> the receiver and returns it, so calls chain.</p>
+<table>
+  <tr><th>Pure</th><th>In place</th><th>Effect</th></tr>
+  <tr><td><code>v:copy()</code></td><td><code>v:set_(u)</code></td><td>Duplicate / overwrite components.</td></tr>
+  <tr><td>&mdash;</td><td><code>v:add_(u)</code>, <code>v:sub_(u)</code>, <code>v:scale_(s)</code></td><td>Arithmetic without allocating (the operators cover the pure form).</td></tr>
+  <tr><td><code>v:normalize()</code></td><td><code>v:normalize_()</code></td><td>Scale to length 1. A zero vector is returned unchanged rather than becoming NaN.</td></tr>
+  <tr><td><code>v:limit(m)</code></td><td><code>v:limit_(m)</code></td><td>Cap the length at <code>m</code>, keeping direction. The workhorse of any steering loop.</td></tr>
+  <tr><td><code>v:rotate(a)</code></td><td><code>v:rotate_(a)</code></td><td>Rotate by <code>a</code> radians.</td></tr>
+  <tr><td><code>v:lerp(u, t)</code></td><td><code>v:lerp_(u, t)</code></td><td>Move a fraction <code>t</code> of the way toward <code>u</code>.</td></tr>
+  <tr><td><code>v:smooth(u, rate, dt)</code></td><td><code>v:smooth_(u, rate, dt)</code></td><td>Frame-rate-independent chase &mdash; see below.</td></tr>
+  <tr><td><code>v:smooth_hl(u, hl, dt)</code></td><td><code>v:smooth_hl_(u, hl, dt)</code></td><td>The same, parameterised by half-life in seconds.</td></tr>
+</table>
+
+<p>Anywhere a vector argument is accepted, two numbers work as well: <code>p:add_(v)</code> and <code>p:add_(0, 9.8)</code> are both valid, which saves building a temporary just to add a constant.</p>
+
+<h3>smooth() is the one to remember</h3>
+<p>Almost everything that follows something else &mdash; a camera trailing a subject, a value chasing an OSC parameter, an attractor being pursued &mdash; wants this. Chasing a target with <code>v:lerp(target, 0.1)</code> every frame moves twice as far at 30fps as at 60fps; <code>smooth</code> closes a fixed <em>proportion</em> of the gap per second and does not care how the frame rate wanders.</p>
+<pre><code>-- rate 1 closes ~63% of the gap per second; 5 is snappy; 10 nearly instant
+persist.cursor:smooth_(target_x, target_y, 4, dt)</code></pre>
+
+<h3>Allocation</h3>
+<p>Every operator returns a new vector, so <code>a + b</code> allocates. For a few hundred operations a frame that is irrelevant, and the readable form is the right default. A particle system doing several thousand a frame generates enough garbage that Lua&rsquo;s collector will eventually show up as a frame-time spike &mdash; which is what the in-place methods are for. Write it readably first; convert the hot loop only if you measure a problem.</p>
+
+<pre><code>-- Readable: one new vector per operation
+local steer = (target - p.pos):normalize() * FORCE * dt
+p.vel = (p.vel + steer):limit(MAX_SPEED)
+
+-- Allocation-free: same result, one scratch vector reused for every particle
+steer:set_(target):sub_(p.pos):normalize_():scale_(FORCE * dt)
+p.vel:add_(steer):limit_(MAX_SPEED)
+p.pos:add_(p.vel.x * dt, p.vel.y * dt)</code></pre>
+
+<div class="note">
+  <strong>Vectors and draw calls</strong>
+  Draw functions take plain numbers &mdash; <code>draw_circle(p.x, p.y, r)</code>.
+  <code>v:xy()</code> expands to two values, but Lua keeps multiple returns only
+  in the <em>last</em> argument position, so <code>draw_line(a.x, a.y, b:xy())</code>
+  works while <code>draw_circle(p:xy(), r)</code> does not &mdash; the latter
+  passes <code>(x, r)</code>.
+</div>
+
+<p>Vectors are also one of the few types that survive a hot reload, so a field of them can be kept in <code>persist</code> and go on moving while you edit the code around it. See <code>scenes/vector_test.lua</code>.</p>
 
 </div>
 </details>
@@ -1422,6 +1575,10 @@ TempoClock.default.schedAbs(TempoClock.default.nextBar, {
   <tr>
     <td><code>3marks-conway.lua</code></td>
     <td>Conway&rsquo;s Life filling the screen at 4&times;4&nbsp;px cells &mdash; a random soup settling into still lifes, blinkers and gliders.</td>
+  </tr>
+  <tr>
+    <td><code>vector_test.lua</code></td>
+    <td>The vector type driving a 300-particle field steered toward a drifting attractor, in both the readable operator style and the allocation-free in-place style, coloured by speed with HSV. Also the reference for <code>persist</code>: edit any constant while it runs and the field keeps flying instead of restarting.</td>
   </tr>
 </table>
 

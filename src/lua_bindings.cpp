@@ -10,11 +10,13 @@
 #include "lua_waveform.h"
 #include "lua_3d.h"
 #include "lua_text.h"
+#include "lua_vec.h"
 #include "renderer.h"
 #include "shader_pipeline.h"
 #include <vector>
 #include <string>
 #include <cstring>   // strcmp for set_blend
+#include <cmath>     // fmodf for the HSV conversion
 
 extern "C" {
 #include "lua.h"
@@ -140,6 +142,99 @@ static int l_set_stroke_weight(lua_State* L) {
 static int l_set_circle_segments(lua_State* L) {
     int n = (int)luaL_checkinteger(L, 1);
     get_renderer(L)->set_circle_segments(n);
+    return 0;
+}
+
+
+// ── HSV colour ────────────────────────────────────────────────────────────────
+//
+// RGB is how the hardware thinks; HSV is how visuals think. "Rotate the hue
+// over time" is the single most common colour gesture in this idiom, and in RGB
+// it is an awkward three-channel dance — in HSV it is one number going up.
+//
+// Convention here matches everything else in the engine: all components are
+// 0..1 floats, not degrees. Hue wraps, so h = 1.25 and h = 0.25 are the same
+// colour and you can feed it an ever-increasing number without wrapping it
+// yourself.
+static void hsv_to_rgb(float h, float s, float v,
+                       float& r, float& g, float& b)
+{
+    // Wrap hue into [0,1). fmodf keeps the sign of its argument, so a negative
+    // hue needs the extra shift.
+    h = fmodf(h, 1.0f);
+    if (h < 0.0f) h += 1.0f;
+
+    if (s <= 0.0f) { r = g = b = v; return; }   // grey: hue is meaningless
+    if (s > 1.0f) s = 1.0f;
+
+    // Six 60-degree sectors around the colour wheel. Within a sector two
+    // channels are fixed (at v and at the darkest value) and the third ramps.
+    const float sector = h * 6.0f;
+    const int   i      = (int)sector;
+    const float f      = sector - (float)i;     // position within the sector
+
+    const float p = v * (1.0f - s);
+    const float q = v * (1.0f - s * f);
+    const float t = v * (1.0f - s * (1.0f - f));
+
+    switch (i % 6) {
+        case 0: r = v; g = t; b = p; break;   // red    -> yellow
+        case 1: r = q; g = v; b = p; break;   // yellow -> green
+        case 2: r = p; g = v; b = t; break;   // green  -> cyan
+        case 3: r = p; g = q; b = v; break;   // cyan   -> blue
+        case 4: r = t; g = p; b = v; break;   // blue   -> magenta
+        default: r = v; g = p; b = q; break;  // magenta-> red
+    }
+}
+
+// hsv(h, s, v [, a]) -> r, g, b, a
+//
+// Returns four values rather than setting anything, so it composes with every
+// call that already takes a colour:
+//
+//     set_color(hsv(elapsed() * 0.1, 0.9, 1))
+//     clear(hsv(0.6, 0.4, 0.15))
+//
+// (Four return values expand only in the last argument position — which is
+// where they are here, as the whole argument list.)
+static int l_hsv(lua_State* L) {
+    float h = (float)luaL_checknumber(L, 1);
+    float s = (float)luaL_checknumber(L, 2);
+    float v = (float)luaL_checknumber(L, 3);
+    float a = (float)luaL_optnumber(L, 4, 1.0);
+
+    float r, g, b;
+    hsv_to_rgb(h, s, v, r, g, b);
+    lua_pushnumber(L, r);
+    lua_pushnumber(L, g);
+    lua_pushnumber(L, b);
+    lua_pushnumber(L, a);
+    return 4;
+}
+
+// set_color_hsv(h, s, v [, a]) — shorthand for set_color(hsv(...)).
+static int l_set_color_hsv(lua_State* L) {
+    float h = (float)luaL_checknumber(L, 1);
+    float s = (float)luaL_checknumber(L, 2);
+    float v = (float)luaL_checknumber(L, 3);
+    float a = (float)luaL_optnumber(L, 4, 1.0);
+    float r, g, b;
+    hsv_to_rgb(h, s, v, r, g, b);
+    Renderer* rend = get_renderer(L);
+    if (rend) rend->set_color(r, g, b, a);
+    return 0;
+}
+
+// set_stroke_hsv(h, s, v [, a])
+static int l_set_stroke_hsv(lua_State* L) {
+    float h = (float)luaL_checknumber(L, 1);
+    float s = (float)luaL_checknumber(L, 2);
+    float v = (float)luaL_checknumber(L, 3);
+    float a = (float)luaL_optnumber(L, 4, 1.0);
+    float r, g, b;
+    hsv_to_rgb(h, s, v, r, g, b);
+    Renderer* rend = get_renderer(L);
+    if (rend) rend->set_stroke(r, g, b, a);
     return 0;
 }
 
@@ -301,6 +396,9 @@ void lua_bindings::register_all(lua_State* L) {
     lua_register(L, "set_stroke_weight",   l_set_stroke_weight);
     lua_register(L, "set_circle_segments", l_set_circle_segments);
     lua_register(L, "set_blend",           l_set_blend);
+    lua_register(L, "hsv",                 l_hsv);
+    lua_register(L, "set_color_hsv",       l_set_color_hsv);
+    lua_register(L, "set_stroke_hsv",      l_set_stroke_hsv);
 
     // Engine clock
     lua_register(L, "elapsed",             l_elapsed);
@@ -341,4 +439,7 @@ void lua_bindings::register_all(lua_State* L) {
 
     // Bitmap text (draw_text, text_width globals)
     lua_text::register_all(L);
+
+    // 2D vector type (vec global)
+    lua_vec::register_all(L);
 }
