@@ -86,3 +86,10 @@ target_link_libraries(phosphor PRIVATE
 if(APPLE)
     target_compile_definitions(phosphor PRIVATE GL_SILENCE_DEPRECATION)
 endif()
+
+# Warnings, on our code only.
+#
+# The vendored targets (lua54, glad) are other people's code and generate a lot
+# of noise we can't act on, so the flags go on the phosphor target alone —
+# otherwise the warnings that matter get lost among hundreds that don't.
+target_compile_options(phosphor PRIVATE -Wall -Wextra)

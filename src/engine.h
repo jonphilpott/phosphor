@@ -51,9 +51,12 @@ private:
     // GPU state (renderer, FBOs, pipeline) is untouched — only Lua is replaced.
     void reload_scene();
 
-    // Fallback — draws a coloured triangle when no scene is loaded.
-    void render_fallback();
-    void setup_triangle();
+    // ── Per-frame steps, in the order run() calls them ────────────────────
+    float update_timing();                        // advance clock, fps title
+    void  dispatch_osc();                         // drain and route OSC queue
+    bool  handle_engine_osc(const OscMessage& m); // true if engine consumed it
+    void  poll_hot_reload();                      // reload if the file changed
+    void  render_frame(float dt);                 // run on_frame and present
 
     // ── Member data ───────────────────────────────────────────────────────
 
@@ -73,11 +76,6 @@ private:
     ShaderPipeline m_pipeline;
 
     std::vector<OscMessage> m_osc_msgs;
-
-    // Fallback triangle (Phase 1 — removed when scenes are always present)
-    unsigned int m_vao         = 0;
-    unsigned int m_vbo         = 0;
-    unsigned int m_shader_prog = 0;
 
     Uint64 m_last_ticks  = 0;
     Uint64 m_fps_ticks   = 0;

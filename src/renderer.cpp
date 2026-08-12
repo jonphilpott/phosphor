@@ -2,6 +2,7 @@
 #include <glad/glad.h>
 #include "renderer.h"
 #include "shader_pipeline.h"
+#include "gl_utils.h"   // gl_compile_shader / gl_link_program
 #include <cstdio>
 #include <cstring>
 #include <cassert>
@@ -242,39 +243,6 @@ void Mat3::transform_point(float x, float y, float& ox, float& oy) const {
     // m[6..8] is always [0,0,1] so we skip the divide
 }
 
-// ── Shader helpers ────────────────────────────────────────────────────────────
-
-static unsigned int compile(unsigned int type, const char* src) {
-    unsigned int id = glCreateShader(type);
-    glShaderSource(id, 1, &src, nullptr);
-    glCompileShader(id);
-    int ok; glGetShaderiv(id, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[512]; glGetShaderInfoLog(id, 512, nullptr, log);
-        fprintf(stderr, "Shader error: %s\n", log);
-        glDeleteShader(id); return 0;
-    }
-    return id;
-}
-
-static unsigned int link(unsigned int v, unsigned int f,
-    std::initializer_list<std::pair<unsigned int, const char*>> attribs = {})
-{
-    unsigned int p = glCreateProgram();
-    glAttachShader(p, v); glAttachShader(p, f);
-    for (const auto& [loc, name] : attribs)
-        glBindAttribLocation(p, loc, name);
-    glLinkProgram(p);
-    int ok; glGetProgramiv(p, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[512]; glGetProgramInfoLog(p, 512, nullptr, log);
-        fprintf(stderr, "Program link error: %s\n", log);
-        glDeleteProgram(p); return 0;
-    }
-    glDeleteShader(v); glDeleteShader(f);
-    return p;
-}
-
 // ── Renderer::init() ─────────────────────────────────────────────────────────
 
 bool Renderer::init(int w, int h) {
@@ -286,10 +254,10 @@ bool Renderer::init(int w, int h) {
     m_verts.reserve((size_t)MAX_VERTS * VERT_FLOATS);
 
     // Compile the geometry shaders (pixel-coord → NDC, with colour).
-    unsigned int vert = compile(GL_VERTEX_SHADER,   k_vert);
-    unsigned int frag = compile(GL_FRAGMENT_SHADER, k_frag);
+    unsigned int vert = gl_compile_shader(GL_VERTEX_SHADER,   k_vert);
+    unsigned int frag = gl_compile_shader(GL_FRAGMENT_SHADER, k_frag);
     if (!vert || !frag) return false;
-    m_shader_prog = link(vert, frag, {{0, "a_pos"}, {1, "a_color"}});
+    m_shader_prog = gl_link_program(vert, frag, {{0, "a_pos"}, {1, "a_color"}});
     if (!m_shader_prog) return false;
 
     m_u_resolution = glGetUniformLocation(m_shader_prog, "u_resolution");
@@ -314,10 +282,10 @@ bool Renderer::init(int w, int h) {
 
     // ── Step 2: Blit pipeline ─────────────────────────────────────────────
     // Used for draw_feedback(), screen blit, and feedback FBO copy.
-    unsigned int bv = compile(GL_VERTEX_SHADER,   k_blit_vert);
-    unsigned int bf = compile(GL_FRAGMENT_SHADER, k_blit_frag);
+    unsigned int bv = gl_compile_shader(GL_VERTEX_SHADER,   k_blit_vert);
+    unsigned int bf = gl_compile_shader(GL_FRAGMENT_SHADER, k_blit_frag);
     if (!bv || !bf) return false;
-    m_blit_prog = link(bv, bf, {{0, "a_pos"}, {1, "a_uv"}});
+    m_blit_prog = gl_link_program(bv, bf, {{0, "a_pos"}, {1, "a_uv"}});
     if (!m_blit_prog) return false;
 
     m_blit_u_texture   = glGetUniformLocation(m_blit_prog, "u_texture");
@@ -327,10 +295,10 @@ bool Renderer::init(int w, int h) {
     // ── Step 2b: Image pipeline ───────────────────────────────────────────
     // Used for draw_image() — draws textured quads at arbitrary pixel rects
     // with arbitrary UV sub-regions (for sprite sheets and image sub-regions).
-    unsigned int iv = compile(GL_VERTEX_SHADER,   k_img_vert);
-    unsigned int if_ = compile(GL_FRAGMENT_SHADER, k_img_frag);
+    unsigned int iv  = gl_compile_shader(GL_VERTEX_SHADER,   k_img_vert);
+    unsigned int if_ = gl_compile_shader(GL_FRAGMENT_SHADER, k_img_frag);
     if (!iv || !if_) return false;
-    m_img_prog = link(iv, if_, {{0, "a_pos"}, {1, "a_uv"}});
+    m_img_prog = gl_link_program(iv, if_, {{0, "a_pos"}, {1, "a_uv"}});
     if (!m_img_prog) return false;
 
     m_img_u_texture    = glGetUniformLocation(m_img_prog, "u_texture");

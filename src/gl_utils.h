@@ -25,7 +25,7 @@ static inline GLuint gl_compile_shader(GLenum type, const char* src) {
     GLint ok = 0;
     glGetShaderiv(id, GL_COMPILE_STATUS, &ok);
     if (!ok) {
-        char log[512];
+        char log[2048];
         glGetShaderInfoLog(id, sizeof(log), nullptr, log);
         fprintf(stderr, "gl_compile_shader (%s):\n%s\n",
                 type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
@@ -56,7 +56,7 @@ static inline GLuint gl_link_program(GLuint vert, GLuint frag,
     GLint ok = 0;
     glGetProgramiv(prog, GL_LINK_STATUS, &ok);
     if (!ok) {
-        char log[512];
+        char log[2048];
         glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
         fprintf(stderr, "gl_link_program:\n%s\n", log);
         glDeleteProgram(prog);

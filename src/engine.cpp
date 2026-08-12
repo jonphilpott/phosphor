@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "lua_bindings.h"
+#include "lua_text.h"   // text_render::draw — for the "no scene loaded" message
 #include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
@@ -21,52 +22,6 @@ static time_t file_mtime(const char* path) {
     return (stat(path, &st) == 0) ? st.st_mtime : 0;
 }
 
-// ── GLSL source for the Phase 1 demo triangle ────────────────────────────────
-// These are plain C strings embedded in the binary.  In Phase 4 we will load
-// shaders from .glsl files instead.
-//
-// Attribute slots are pinned via glBindAttribLocation before linking (see
-// setup_triangle below) — this must match the glVertexAttribPointer calls.
-
-static const char* k_vert_src = R"glsl(
-#version 140
-
-// Slot 0: 2D position in Normalised Device Coordinates (-1..1 on each axis).
-in vec2 a_pos;
-
-// Slot 1: RGB colour per vertex — we interpolate this across the triangle.
-in vec3 a_color;
-
-out vec3 v_color;   // passed through to the fragment shader
-
-void main() {
-    // In NDC, (0,0) is the centre of the screen, (1,1) is top-right.
-    // No projection matrix needed for this 2D demo.
-    gl_Position = vec4(a_pos, 0.0, 1.0);
-    v_color = a_color;
-}
-)glsl";
-
-static const char* k_frag_src = R"glsl(
-#version 140
-
-in  vec3 v_color;
-out vec4 frag_color;
-
-void main() {
-    frag_color = vec4(v_color, 1.0);
-}
-)glsl";
-
-// ── Triangle vertex data ──────────────────────────────────────────────────────
-// Each row: x, y (NDC), r, g, b
-// The three vertices form a classic coloured triangle.
-static const float k_triangle[] = {
-     0.0f,  0.5f,   1.0f, 0.0f, 0.0f,   // top    — red
-    -0.5f, -0.5f,   0.0f, 1.0f, 0.0f,   // left   — green
-     0.5f, -0.5f,   0.0f, 0.0f, 1.0f,   // right  — blue
-};
-
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
 Engine::Engine(int display_index)
@@ -77,9 +32,6 @@ Engine::~Engine() {
     // Clean up in reverse order of creation.
     m_pipeline.shutdown();
     m_renderer.shutdown();
-    if (m_vao)          glDeleteVertexArrays(1, &m_vao);
-    if (m_vbo)          glDeleteBuffers(1, &m_vbo);
-    if (m_shader_prog)  glDeleteProgram(m_shader_prog);
     if (m_gl_ctx)       SDL_GL_DeleteContext(m_gl_ctx);
     if (m_window)       SDL_DestroyWindow(m_window);
     SDL_Quit();
@@ -185,9 +137,6 @@ bool Engine::init() {
     // framebuffer is 2560x1440 — we must use the drawable size for glViewport.
     SDL_GL_GetDrawableSize(m_window, &m_draw_w, &m_draw_h);
     glViewport(0, 0, m_draw_w, m_draw_h);
-
-    // Step 9: Upload the demo triangle to the GPU.
-    setup_triangle();
 
     // Step 10: Initialise the 2D renderer.
     if (!m_renderer.init(m_draw_w, m_draw_h)) {
@@ -373,144 +322,24 @@ void Engine::reload_scene() {
 }
 
 // ── run() — main loop ─────────────────────────────────────────────────────────
+//
+// Each frame is the same five steps, in this order:
+//   1. work out how much time passed        — update_timing()
+//   2. act on anything that arrived by OSC  — dispatch_osc()
+//   3. reload the scene if its file changed — poll_hot_reload()
+//   4. handle window and keyboard events    — handle_events()
+//   5. draw                                 — render_frame()
 
 void Engine::run() {
     while (m_running) {
-        // Compute delta-time in seconds since the last frame.
-        // SDL_GetTicks64() returns milliseconds — divide by 1000 for seconds.
-        Uint64 now = SDL_GetTicks64();
-        float dt   = (now - m_last_ticks) / 1000.0f;
-        m_last_ticks = now;
+        const float dt = update_timing();
 
-        // Clamp dt to a sane frame.  Anything that stalls the loop — a hot
-        // reload, dragging the window, the compositor suspending us — produces
-        // one enormous dt on the frame afterwards.  Scenes integrate dt, so an
-        // unclamped spike makes everything leap forward: rotations jump,
-        // particles teleport off screen, and physics-ish scenes never recover.
-        // Better to lose a little wall-clock accuracy than to lurch on stage.
-        const float MAX_DT = 0.1f;   // 10 fps worth — below this we run normally
-        if (dt > MAX_DT) dt = MAX_DT;
-        if (dt < 0.0f)   dt = 0.0f;  // guard against clock going backwards
-
-        m_time += dt;
-
-        // FPS counter — update the window title once per second.
-        m_fps_frames++;
-        if (now - m_fps_ticks >= 1000) {
-            char title[64];
-            snprintf(title, sizeof(title), "phosphor — %d fps", m_fps_frames);
-            SDL_SetWindowTitle(m_window, title);
-            m_fps_frames = 0;
-            m_fps_ticks  = now;
-        }
-
-        // Drain the OSC queue — all messages received since the last frame.
-        // All dispatching happens here on the main thread, so Lua callbacks
-        // never race with the recv thread that fills the queue.
-        m_osc.poll(m_osc_msgs);
-        for (const auto& msg : m_osc_msgs) {
-            // ── Engine-level OSC: /scene <path> ──────────────────────────────
-            // Intercepted before Lua dispatch so it works regardless of whether
-            // the current scene defines on_osc, or even if it has crashed.
-            // First string argument is the scene file path, e.g.:
-            //   /scene "scenes/matrix.lua"
-            // Path is relative to the working directory (same as -s at startup).
-            if (msg.address == "/scene") {
-                if (!msg.args.empty() && msg.args[0].type == 's') {
-                    handle_scene_request(msg.args[0].s, msg.from_loopback);
-                }
-                continue;   // do not forward to Lua's on_osc
-            }
-
-            // ── Engine-level OSC: /beat <phase> ──────────────────────────────
-            // Updates m_beat (→ u_beat in all shaders) and fires on_beat(phase).
-            // phase is a float the caller defines — common convention is [0..1)
-            // where 0 = downbeat, or a raw beat counter from the sequencer clock.
-            // SuperCollider example:
-            //   TempoClock.default.schedAbs(TempoClock.default.nextBar, {
-            //       ~p.sendMsg("/beat", 0.0); nil });
-            if (msg.address == "/beat") {
-                if (!msg.args.empty()) {
-                    if      (msg.args[0].type == 'f') m_beat = msg.args[0].f;
-                    else if (msg.args[0].type == 'i') m_beat = (float)msg.args[0].i;
-                }
-                // Fire the optional on_beat(phase) Lua hook.
-                if (lua_getglobal(m_lua.L, "on_beat") == LUA_TFUNCTION) {
-                    lua_pushnumber(m_lua.L, (double)m_beat);
-                    if (lua_pcall(m_lua.L, 1, 0, 0) != LUA_OK) {
-                        const char* err = lua_tostring(m_lua.L, -1);
-                        fprintf(stderr, "Lua error [on_beat]: %s\n",
-                                err ? err : "(no message)");
-                        lua_pop(m_lua.L, 1);
-                    }
-                } else {
-                    lua_pop(m_lua.L, 1);
-                }
-                continue;   // do not forward to Lua's on_osc
-            }
-
-            // Look up the global function on_osc.  If it isn't defined in the
-            // current scene, silently skip — not every scene needs OSC input.
-            if (lua_getglobal(m_lua.L, "on_osc") != LUA_TFUNCTION) {
-                lua_pop(m_lua.L, 1);
-                continue;
-            }
-
-            // Push address then each argument in order.
-            // OSC int/float → Lua number, OSC string → Lua string.
-            // Other types (blob, timetag, MIDI) were already filtered out by
-            // the parser in osc.cpp, so we only see 'i', 'f', 's' here.
-            lua_pushstring(m_lua.L, msg.address.c_str());
-            for (const auto& arg : msg.args) {
-                if      (arg.type == 'i') lua_pushinteger(m_lua.L, arg.i);
-                else if (arg.type == 'f') lua_pushnumber(m_lua.L,  arg.f);
-                else if (arg.type == 's') lua_pushstring(m_lua.L,  arg.s.c_str());
-            }
-
-            int nargs = 1 + (int)msg.args.size();
-            if (lua_pcall(m_lua.L, nargs, 0, 0) != LUA_OK) {
-                const char* err = lua_tostring(m_lua.L, -1);
-                fprintf(stderr, "Lua error [on_osc %s]: %s\n",
-                        msg.address.c_str(), err ? err : "(no message)");
-                lua_pop(m_lua.L, 1);
-            }
-        }
-
-        // ── Hot reload: poll scene file mtime ─────────────────────────────
-        // stat() is cheap (a single syscall) so calling it every frame is fine.
-        // We use a 150 ms debounce so editors that write files in multiple
-        // steps (save → truncate → write) don't trigger a mid-write reload.
-        if (!m_scene_path.empty()) {
-            time_t new_mtime = file_mtime(m_scene_path.c_str());
-            if (new_mtime != 0 && new_mtime != m_scene_mtime) {
-                if (!m_reload_pending) {
-                    // First frame where we noticed a change — start the timer.
-                    m_reload_pending = true;
-                    m_reload_timer   = now;
-                } else if (now - m_reload_timer >= 150) {
-                    // Debounce elapsed — safe to reload.
-                    reload_scene();
-                }
-            }
-        }
-
+        dispatch_osc();
+        poll_hot_reload();
         handle_events();
+        render_frame(dt);
 
-        // Reset renderer's CPU vertex buffer and transform stack for this frame.
-        if (m_has_scene) m_renderer.begin_frame();
-
-        // Call the Lua on_frame(dt) hook.  Scripts call clear(), draw_rect(),
-        // etc. — these accumulate into the renderer's vertex buffer.
-        m_lua.call_hook("on_frame", (double)dt);
-
-        // Flush vertices, run post-process pipeline, blit to screen,
-        // copy result to feedback FBO.
-        if (m_has_scene) m_renderer.end_frame(&m_pipeline, m_time, m_beat);
-
-        // Fallback triangle — only when no scene is loaded.
-        if (!m_has_scene) render_fallback();
-
-        // Swap the back buffer to the screen (respects vsync interval set above).
+        // Swap the back buffer to the screen (respects the vsync interval).
         SDL_GL_SwapWindow(m_window);
 
         // Deferred startup fullscreen — only fires once, on the first frame.
@@ -527,6 +356,178 @@ void Engine::run() {
             toggle_fullscreen();
         }
     }
+}
+
+// ── update_timing() ───────────────────────────────────────────────────────────
+// Advances the frame clock and refreshes the fps readout in the title bar.
+// Returns the delta-time in seconds to hand to the scene.
+
+float Engine::update_timing() {
+    // SDL_GetTicks64() returns milliseconds — divide by 1000 for seconds.
+    const Uint64 now = SDL_GetTicks64();
+    float dt = (now - m_last_ticks) / 1000.0f;
+    m_last_ticks = now;
+
+    // Clamp dt to a sane frame.  Anything that stalls the loop — a hot reload,
+    // dragging the window, the compositor suspending us — produces one enormous
+    // dt on the frame afterwards.  Scenes integrate dt, so an unclamped spike
+    // makes everything leap forward: rotations jump, particles teleport off
+    // screen, and physics-ish scenes never recover.  Better to lose a little
+    // wall-clock accuracy than to lurch on stage.
+    const float MAX_DT = 0.1f;   // 10 fps worth — above this we run normally
+    if (dt > MAX_DT) dt = MAX_DT;
+    if (dt < 0.0f)   dt = 0.0f;  // guard against the clock going backwards
+
+    m_time += dt;
+
+    // FPS counter — update the window title once per second.
+    m_fps_frames++;
+    if (now - m_fps_ticks >= 1000) {
+        char title[64];
+        snprintf(title, sizeof(title), "phosphor — %d fps", m_fps_frames);
+        SDL_SetWindowTitle(m_window, title);
+        m_fps_frames = 0;
+        m_fps_ticks  = now;
+    }
+
+    return dt;
+}
+
+// ── dispatch_osc() ────────────────────────────────────────────────────────────
+// Drains the OSC queue and routes each message.  All dispatching happens here on
+// the main thread, so Lua callbacks never race with the recv thread filling the
+// queue.
+
+void Engine::dispatch_osc() {
+    m_osc.poll(m_osc_msgs);
+
+    for (const auto& msg : m_osc_msgs) {
+        // Engine-level addresses are intercepted before Lua dispatch, so they
+        // work regardless of whether the current scene defines on_osc — or even
+        // if that scene has crashed.
+        if (handle_engine_osc(msg)) continue;
+
+        // Look up the global function on_osc.  If it isn't defined in the
+        // current scene, silently skip — not every scene needs OSC input.
+        if (lua_getglobal(m_lua.L, "on_osc") != LUA_TFUNCTION) {
+            lua_pop(m_lua.L, 1);
+            continue;
+        }
+
+        // Push address then each argument in order.
+        // OSC int/float → Lua number, OSC string → Lua string.
+        // Other types (blob, timetag, MIDI) were already filtered out by the
+        // parser in osc_parse.cpp, so we only see 'i', 'f', 's' here.
+        lua_pushstring(m_lua.L, msg.address.c_str());
+        for (const auto& arg : msg.args) {
+            if      (arg.type == 'i') lua_pushinteger(m_lua.L, arg.i);
+            else if (arg.type == 'f') lua_pushnumber(m_lua.L,  arg.f);
+            else if (arg.type == 's') lua_pushstring(m_lua.L,  arg.s.c_str());
+        }
+
+        const int nargs = 1 + (int)msg.args.size();
+        if (lua_pcall(m_lua.L, nargs, 0, 0) != LUA_OK) {
+            const char* err = lua_tostring(m_lua.L, -1);
+            fprintf(stderr, "Lua error [on_osc %s]: %s\n",
+                    msg.address.c_str(), err ? err : "(no message)");
+            lua_pop(m_lua.L, 1);
+        }
+    }
+}
+
+// ── handle_engine_osc() ───────────────────────────────────────────────────────
+// Handles the OSC addresses the engine reserves for itself.
+// Returns true if the message was consumed and must not reach on_osc.
+
+bool Engine::handle_engine_osc(const OscMessage& msg) {
+    // ── /scene <path> ────────────────────────────────────────────────────────
+    // Swap the running scene, e.g. /scene "scenes/matrix.lua".
+    // handle_scene_request does the security checks — see its definition.
+    if (msg.address == "/scene") {
+        if (!msg.args.empty() && msg.args[0].type == 's') {
+            handle_scene_request(msg.args[0].s, msg.from_loopback);
+        }
+        return true;
+    }
+
+    // ── /beat <phase> ────────────────────────────────────────────────────────
+    // Updates m_beat (→ u_beat in all shaders) and fires on_beat(phase).
+    // phase is a float the caller defines — common convention is [0..1) where
+    // 0 = downbeat, or a raw beat counter from the sequencer clock.
+    // SuperCollider example:
+    //   TempoClock.default.schedAbs(TempoClock.default.nextBar, {
+    //       ~p.sendMsg("/beat", 0.0); nil });
+    if (msg.address == "/beat") {
+        if (!msg.args.empty()) {
+            if      (msg.args[0].type == 'f') m_beat = msg.args[0].f;
+            else if (msg.args[0].type == 'i') m_beat = (float)msg.args[0].i;
+        }
+        // Fire the optional on_beat(phase) Lua hook.
+        if (lua_getglobal(m_lua.L, "on_beat") == LUA_TFUNCTION) {
+            lua_pushnumber(m_lua.L, (double)m_beat);
+            if (lua_pcall(m_lua.L, 1, 0, 0) != LUA_OK) {
+                const char* err = lua_tostring(m_lua.L, -1);
+                fprintf(stderr, "Lua error [on_beat]: %s\n",
+                        err ? err : "(no message)");
+                lua_pop(m_lua.L, 1);
+            }
+        } else {
+            lua_pop(m_lua.L, 1);
+        }
+        return true;
+    }
+
+    return false;   // not ours — pass it to the scene
+}
+
+// ── poll_hot_reload() ─────────────────────────────────────────────────────────
+// Watches the scene file's modification time and reloads when it changes.
+// stat() is a single cheap syscall, so checking every frame is fine.  The 150 ms
+// debounce exists because editors write files in several steps (truncate, then
+// write) and we must not reload a half-written file.
+
+void Engine::poll_hot_reload() {
+    if (m_scene_path.empty()) return;
+
+    const time_t new_mtime = file_mtime(m_scene_path.c_str());
+    if (new_mtime == 0 || new_mtime == m_scene_mtime) return;
+
+    if (!m_reload_pending) {
+        // First frame where we noticed a change — start the debounce timer.
+        m_reload_pending = true;
+        m_reload_timer   = SDL_GetTicks64();
+    } else if (SDL_GetTicks64() - m_reload_timer >= 150) {
+        reload_scene();
+    }
+}
+
+// ── render_frame() ────────────────────────────────────────────────────────────
+// Runs the scene's on_frame hook between the renderer's begin/end, so all its
+// draw calls land in the scene FBO and go through the post-process pipeline.
+
+void Engine::render_frame(float dt) {
+    if (!m_has_scene) {
+        // No scene loaded — say so on screen rather than leaving the window
+        // black, which is indistinguishable from a scene that draws nothing.
+        m_renderer.begin_frame();
+        m_renderer.set_color(0.0f, 0.9f, 0.4f, 1.0f);
+        text_render::draw(m_renderer, 24.0f, 24.0f,
+                          "phosphor\n\nno scene loaded\n"
+                          "run with:  phosphor -s scenes/test.lua", 2.0f);
+        m_renderer.end_frame(&m_pipeline, m_time, m_beat);
+        return;
+    }
+
+    // Reset the renderer's CPU vertex buffer and transform stack for this frame.
+    m_renderer.begin_frame();
+
+    // Call the Lua on_frame(dt) hook.  Scripts call clear(), draw_rect(), etc.
+    // — these accumulate into the renderer's vertex buffer.
+    m_lua.call_hook("on_frame", (double)dt);
+
+    // Flush vertices, run the post-process pipeline, blit to the screen, then
+    // copy the result into the feedback FBO for the next frame.
+    m_renderer.end_frame(&m_pipeline, m_time, m_beat);
 }
 
 // ── handle_events() ───────────────────────────────────────────────────────────
@@ -559,21 +560,6 @@ void Engine::handle_events() {
                 break;
         }
     }
-}
-
-// ── render() ─────────────────────────────────────────────────────────────────
-
-void Engine::render_fallback() {
-    // Clear to a dark background so the triangle stands out.
-    glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // Draw the demo triangle.
-    glUseProgram(m_shader_prog);
-    glBindVertexArray(m_vao);
-    // 3 vertices, starting at index 0, using the triangle primitive type.
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(0);
 }
 
 // ── toggle_fullscreen() ───────────────────────────────────────────────────────
@@ -616,44 +602,4 @@ void Engine::toggle_fullscreen() {
 
 void Engine::request_fullscreen() {
     m_pending_fullscreen = true;
-}
-
-// ── setup_triangle() ─────────────────────────────────────────────────────────
-
-void Engine::setup_triangle() {
-    // Compile and link the demo shaders via the shared gl_utils helpers.
-    GLuint vert = gl_compile_shader(GL_VERTEX_SHADER,   k_vert_src);
-    GLuint frag = gl_compile_shader(GL_FRAGMENT_SHADER, k_frag_src);
-    if (!vert || !frag) return;
-    m_shader_prog = gl_link_program(vert, frag, {{0, "a_pos"}, {1, "a_color"}});
-    if (!m_shader_prog) return;
-
-    // A VAO (Vertex Array Object) records the vertex format description so we
-    // don't have to re-specify it every frame — binding the VAO is enough.
-    glGenVertexArrays(1, &m_vao);
-    glBindVertexArray(m_vao);
-
-    // A VBO (Vertex Buffer Object) is a chunk of GPU memory holding our
-    // vertex data.  GL_STATIC_DRAW tells the driver this data won't change,
-    // so it can live in fast video memory.
-    glGenBuffers(1, &m_vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(k_triangle), k_triangle, GL_STATIC_DRAW);
-
-    // Tell the GPU how to interpret the raw bytes in the VBO.
-    // Each vertex is 5 floats: [x, y, r, g, b]
-    // Stride = 5 * sizeof(float) — distance in bytes between consecutive vertices.
-
-    // Attribute 0 — position: 2 floats at byte offset 0.
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
-                          5 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // Attribute 1 — colour: 3 floats at byte offset 2*sizeof(float).
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-                          5 * sizeof(float), (void*)(2 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    // Unbind the VAO — we'll rebind it in render() when we want to draw.
-    glBindVertexArray(0);
 }
