@@ -210,6 +210,8 @@ cmake --build build</code></pre>
   <tr><th>Flag</th><th>Description</th><th>Default</th></tr>
   <tr><td><code>-s &lt;path&gt;</code></td><td>Scene file to load</td><td>—</td></tr>
   <tr><td><code>-d &lt;n&gt;</code></td><td>Display index (0 = primary)</td><td>0</td></tr>
+  <tr><td><code>-f</code></td><td>Start fullscreen</td><td>off</td></tr>
+  <tr><td><code>--allow-remote-scene</code></td><td>Honour OSC <code>/scene</code> from other machines. Off by default — <code>/scene</code> executes a Lua file, so accepting it from the network lets anyone who can reach port 9000 run code. Scenes must still resolve inside the <code>-s</code> directory either way.</td><td>off</td></tr>
   <tr><td><code>-h</code></td><td>Print help and exit</td><td>—</td></tr>
 </table>
 
@@ -229,13 +231,14 @@ cmake --build build</code></pre>
   <tr><td><code>on_osc(addr, ...)</code></td><td>Once per incoming OSC message</td><td>React to live control from SuperCollider / PD</td></tr>
 </table>
 
-<p>All three are optional. A scene that defines none of them is valid (the fallback triangle is shown).</p>
+<p>All three are optional. A scene that defines none of them is valid (the window shows a &ldquo;no scene loaded&rdquo; message).</p>
 
 <h3>Built-in globals</h3>
 <table>
   <tr><th>Name</th><th>Type</th><th>Description</th></tr>
   <tr><td><code>screen_width</code></td><td>integer</td><td>Drawable width in pixels (Retina-aware). Updated on resize and fullscreen toggle.</td></tr>
   <tr><td><code>screen_height</code></td><td>integer</td><td>Drawable height in pixels.</td></tr>
+  <tr><td><code>elapsed()</code></td><td>function &rarr; number</td><td>Seconds since startup &mdash; the same clock the engine sends to shaders as <code>u_time</code>, so Lua and shader animation stay in step. Responds to pause and the time-scale keys, which a scene&rsquo;s own <code>t = t + dt</code> accumulator does not.</td></tr>
 </table>
 
 <h3>Minimal scene template</h3>
@@ -255,7 +258,12 @@ function on_frame(dt)
 end</code></pre>
 
 <h3>Hot reload</h3>
-<p>Save the scene file while Phosphor is running — changes appear within ~200 ms. The Lua VM is torn down and rebuilt; GPU state (renderer, FBOs, shader pipeline) is untouched. <code>on_load()</code> is called again after reload.</p>
+<p>Save the scene file while Phosphor is running &mdash; changes appear within ~200&nbsp;ms. The Lua VM is torn down and rebuilt; GPU state (renderer and FBOs) is untouched. <code>on_load()</code> is called again after reload. The post-process shader chain is reset on reload, so a scene always starts from the pipeline its own <code>on_load</code> asks for rather than inheriting the previous scene&rsquo;s.</p>
+
+<p>Fragment shaders hot-reload too: save a file in <code>shaders/</code> and the loaded programs recompile in place within ~250&nbsp;ms, including the ones canvases own. If the edited source fails to compile, the previous program keeps running and the GLSL error is printed &mdash; a typo mid-set doesn&rsquo;t drop the pass.</p>
+
+<h3>When a scene errors</h3>
+<p>A runtime error in <code>on_frame</code> does not black out the window. The half-drawn frame is discarded, the last complete frame is put back up, and the error message is drawn across the top of the screen. Logging is throttled to once a second so the terminal stays readable. Fix the file, save, and the next good frame clears the banner. The same applies to a syntax error saved into the scene: the visuals hold on the last good frame while you sort it out.</p>
 
 </div>
 </details>
@@ -282,6 +290,27 @@ end</code></pre>
   <tr><td><code>set_stroke_weight(w)</code></td><td>Line thickness / point size in pixels</td><td>1.0</td></tr>
   <tr><td><code>set_circle_segments(n)</code></td><td>Tessellation for <code>draw_circle</code></td><td>32</td></tr>
 </table>
+
+<h3>Blend mode</h3>
+<p><code>set_blend(mode)</code> controls how new pixels combine with what is already on screen. It resets to <code>"alpha"</code> at the start of every frame, like the colour registers, so a scene that wants another mode asks for it each frame.</p>
+<table>
+  <tr><th>Mode</th><th>Result</th><th>Use for</th></tr>
+  <tr><td><code>"alpha"</code></td><td><code>src&times;a + dst&times;(1-a)</code></td><td>Normal layering. The default.</td></tr>
+  <tr><td><code>"add"</code></td><td><code>src&times;a + dst</code></td><td>Light accumulates instead of replacing &mdash; overlapping strokes brighten toward white. This is how phosphor, neon and CRT beams actually behave, and it is the mode to reach for with <code>draw_feedback</code>.</td></tr>
+  <tr><td><code>"multiply"</code></td><td><code>src&times;dst</code></td><td>Darkening and tinting. White leaves the destination alone, black knocks it out.</td></tr>
+  <tr><td><code>"screen"</code></td><td><code>src + dst&times;(1-src)</code></td><td>Lightens like <code>add</code>, but approaches white gently rather than clipping hard.</td></tr>
+</table>
+
+<pre><code>function on_frame(dt)
+    draw_feedback(0.92)          -- fade the previous frame
+
+    set_blend("add")             -- strokes now glow where they cross
+    set_stroke(0.1, 0.9, 0.5, 1)
+    for i = 1, 40 do
+        local a = elapsed() + i * 0.15
+        draw_line(cx, cy, cx + math.cos(a) * 300, cy + math.sin(a) * 300)
+    end
+end</code></pre>
 
 <h3>Primitives</h3>
 <table>
@@ -1212,6 +1241,10 @@ r.stop;</code></pre>
 <table>
   <tr><th>Key</th><th>Action</th></tr>
   <tr><td><code>F</code></td><td>Toggle fullscreen on the current display. The viewport and Lua globals update immediately.</td></tr>
+  <tr><td><code>Space</code></td><td>Pause. The scene keeps redrawing with <code>dt = 0</code>, so feedback trails hold still rather than the screen going black.</td></tr>
+  <tr><td><code>[</code> / <code>]</code></td><td>Halve / double the rate time passes. Affects <code>dt</code>, <code>elapsed()</code> and <code>u_time</code> together. Clamped to &times;1/64 &hellip; &times;8.</td></tr>
+  <tr><td><code>\</code></td><td>Back to &times;1 speed, unpaused.</td></tr>
+  <tr><td><code>R</code></td><td>Reload the scene now, without waiting for a file save. Useful for re-running <code>on_load</code> to reseed an automaton.</td></tr>
   <tr><td><code>Esc</code></td><td>Quit.</td></tr>
 </table>
 

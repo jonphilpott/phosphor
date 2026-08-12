@@ -61,6 +61,8 @@ bool LuaState::load_file(const char* path) {
     int load_err = luaL_loadfile(L, path);
     if (load_err != LUA_OK) {
         report_error(path);
+        // Loading happens once, not per frame, so printing here can't flood.
+        fprintf(stderr, "Lua error [%s]: %s\n", path, m_last_error.c_str());
         return false;
     }
 
@@ -71,6 +73,7 @@ bool LuaState::load_file(const char* path) {
     int call_err = lua_pcall(L, 0, LUA_MULTRET, 0);
     if (call_err != LUA_OK) {
         report_error(path);
+        fprintf(stderr, "Lua error [%s]: %s\n", path, m_last_error.c_str());
         return false;
     }
 
@@ -157,8 +160,14 @@ bool LuaState::call_hook(const char* name, const char* s, double v) {
 void LuaState::report_error(const char* context) {
     // On a lua_pcall error the error message is on top of the stack as a
     // string.  lua_tostring returns a pointer valid while the value is on the
-    // stack — copy it via fprintf before popping.
+    // stack — copy it out before popping.
     const char* msg = lua_tostring(L, -1);
-    fprintf(stderr, "Lua error [%s]: %s\n", context, msg ? msg : "(no message)");
+    m_last_error = msg ? msg : "(no message)";
     lua_pop(L, 1);
+
+    // Deliberately not printed here.  on_frame runs sixty times a second, so a
+    // scene with a runtime error would emit sixty identical lines per second
+    // and bury everything else in the terminal.  The engine owns the throttling
+    // and the on-screen banner; this just records what went wrong.
+    m_last_error_context = context;
 }

@@ -14,6 +14,7 @@
 #include "shader_pipeline.h"
 #include <vector>
 #include <string>
+#include <cstring>   // strcmp for set_blend
 
 extern "C" {
 #include "lua.h"
@@ -142,6 +143,42 @@ static int l_set_circle_segments(lua_State* L) {
     return 0;
 }
 
+// set_blend("alpha" | "add" | "multiply" | "screen")
+// Controls how subsequent draws combine with what's already on screen.
+// Resets to "alpha" at the start of every frame.
+//
+//   alpha    — normal layering (default)
+//   add      — light accumulates; overlapping strokes brighten toward white.
+//              This is the phosphor/neon look, especially with draw_feedback.
+//   multiply — darkens; useful for shadows and tinting
+//   screen   — lightens like add, but saturates gently instead of clipping
+static int l_set_blend(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+
+    BlendMode mode;
+    if      (strcmp(name, "alpha")    == 0) mode = BlendMode::ALPHA;
+    else if (strcmp(name, "add")      == 0) mode = BlendMode::ADD;
+    else if (strcmp(name, "multiply") == 0) mode = BlendMode::MULTIPLY;
+    else if (strcmp(name, "screen")   == 0) mode = BlendMode::SCREEN;
+    else return luaL_error(L, "set_blend: unknown mode '%s' "
+                              "(use 'alpha', 'add', 'multiply' or 'screen')", name);
+
+    Renderer* r = get_renderer(L);
+    if (r) r->set_blend(mode);
+    return 0;
+}
+
+// elapsed() → seconds since startup
+// The same clock the engine feeds to shaders as u_time, so Lua animation and
+// shader animation stay in step. Affected by pause and the time-scale keys,
+// which is the point: scenes that use it can be slowed down or held live,
+// whereas a scene accumulating its own `t = t + dt` only follows dt.
+static int l_elapsed(lua_State* L) {
+    Renderer* r = get_renderer(L);
+    lua_pushnumber(L, r ? (double)r->get_time() : 0.0);
+    return 1;
+}
+
 // ── Drawing primitives ────────────────────────────────────────────────────────
 
 static int l_draw_rect(lua_State* L) {
@@ -263,6 +300,10 @@ void lua_bindings::register_all(lua_State* L) {
     lua_register(L, "set_stroke",          l_set_stroke);
     lua_register(L, "set_stroke_weight",   l_set_stroke_weight);
     lua_register(L, "set_circle_segments", l_set_circle_segments);
+    lua_register(L, "set_blend",           l_set_blend);
+
+    // Engine clock
+    lua_register(L, "elapsed",             l_elapsed);
 
     // Drawing primitives
     lua_register(L, "draw_rect",           l_draw_rect);

@@ -30,6 +30,26 @@ struct Mat3 {
     void transform_point(float x, float y, float& ox, float& oy) const;
 };
 
+// ── BlendMode ────────────────────────────────────────────────────────────────
+// How a new pixel is combined with what is already in the framebuffer.
+//
+// Each mode is a pair of multipliers — one for the pixel being drawn (the
+// "source"), one for what's already there (the "destination") — and the results
+// are added. So ALPHA is src*a + dst*(1-a): the classic painter's model where
+// an opaque pixel replaces what's beneath it.
+//
+// ADD is the one worth knowing for this engine. Adding light rather than
+// replacing it is how real phosphor, neon and CRT beams behave: overlapping
+// strokes get brighter and saturate toward white instead of the topmost one
+// winning. Combined with draw_feedback it gives the glowing trails this whole
+// project is named after.
+enum class BlendMode {
+    ALPHA,      // src*srcA + dst*(1-srcA)  — normal layering (default)
+    ADD,        // src*srcA + dst           — light accumulates; glow, sparks
+    MULTIPLY,   // src*dst                  — darkens; shadows, tinting
+    SCREEN      // src + dst*(1-src)        — lightens, but saturates gently
+};
+
 // ── Renderer ─────────────────────────────────────────────────────────────────
 // Owns the 2D drawing state: vertex batcher, transform stack, colour state.
 //
@@ -84,6 +104,11 @@ public:
 
     // Number of segments for draw_circle.  Default: 32.
     void set_circle_segments(int n);
+
+    // Set how subsequent draws blend with the framebuffer.  Reset to ALPHA at
+    // the start of every frame, so a scene that wants ADD must ask each frame
+    // — the same convention as the colour and stroke state.
+    void set_blend(BlendMode mode);
 
     // ── Feedback ──────────────────────────────────────────────────────────
     // Blit the previous frame's final image into the current scene FBO.
@@ -147,6 +172,9 @@ private:
 
     // Recompute the cached unit-circle sin/cos table for m_circle_segs.
     void rebuild_circle_table();
+
+    // Push m_blend to the GL blend function.
+    void apply_blend();
 
     // Create one FBO + colour texture at size w×h.
     // The texture uses GL_RGBA8 with GL_LINEAR filtering.
@@ -214,6 +242,11 @@ public:
     void pop_target();
     float get_time() const { return m_time; }
 
+    // Set the engine clock the scene sees via elapsed().  end_frame() also sets
+    // it, but that is a frame too late for the scene currently drawing, so the
+    // engine sets it before calling on_frame.
+    void set_time(float t) { m_time = t; }
+
     // Dimensions of whatever we are currently drawing into — the screen-sized
     // scene FBO normally, or a canvas's FBO between canvas:begin() and
     // canvas:finish().  Anything that needs to convert to or from pixel
@@ -229,6 +262,13 @@ public:
     // Exposed publicly so canvas:finish() can commit geometry before running
     // its local shader pipeline (which rebinds FBOs internally).
     void flush();
+
+    // Throw away geometry queued this frame without drawing it.
+    //
+    // Used when a scene's on_frame raises an error partway through: the
+    // vertices it managed to submit describe half a frame, and showing that is
+    // worse than showing the last complete one.
+    void discard_verts() { m_verts.clear(); }
 
 private:
     struct RenderTarget { unsigned int fbo; int w, h; };
@@ -249,6 +289,7 @@ private:
     float m_stroke[4] = {1,1,1,1};    // current stroke colour
     float m_stroke_weight = 1.0f;
     int   m_circle_segs   = 32;
+    BlendMode m_blend     = BlendMode::ALPHA;
 
     // Cached unit circle for draw_circle, holding m_circle_segs+1 points.
     // Rebuilt only when the segment count changes.

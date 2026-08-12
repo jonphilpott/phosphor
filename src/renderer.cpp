@@ -437,6 +437,14 @@ void Renderer::begin_frame() {
     m_stroke[0]=m_stroke[1]=m_stroke[2]=m_stroke[3]=1.0f;
     m_stroke_weight = 1.0f;
     m_circle_segs   = 32;
+
+    // Blending is per-frame state like colour: a scene asking for ADD does so
+    // every frame, and a scene that never mentions blending always gets the
+    // normal painter's model. Set unconditionally rather than through
+    // set_blend(), because the GL state may have been changed behind our back
+    // by end_frame's blits and must be re-established regardless.
+    m_blend = BlendMode::ALPHA;
+    apply_blend();
 }
 
 void Renderer::push_target(unsigned int fbo, int w, int h) {
@@ -745,6 +753,48 @@ void Renderer::set_stroke_weight(float w) {
 
 void Renderer::set_circle_segments(int n) {
     m_circle_segs = n < 3 ? 3 : n;
+}
+
+// ── Blend mode ────────────────────────────────────────────────────────────────
+
+void Renderer::set_blend(BlendMode mode) {
+    if (mode == m_blend) return;
+
+    // Flush before switching. Vertices already queued were drawn by a scene
+    // that expected the *old* blend mode; if we changed GL state first, those
+    // vertices would be composited under the new mode when the batch is
+    // eventually sent. Committing them here keeps the mode change where the
+    // scene put it in the draw order.
+    flush_verts();
+
+    m_blend = mode;
+    apply_blend();
+}
+
+void Renderer::apply_blend() {
+    // glBlendFunc(src_factor, dst_factor): the fragment's colour is multiplied
+    // by src_factor, the existing pixel by dst_factor, and the two are summed.
+    switch (m_blend) {
+        case BlendMode::ALPHA:
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            break;
+        case BlendMode::ADD:
+            // Destination is kept whole and the source is added on top, scaled
+            // by its own alpha — so alpha controls how much light each draw
+            // contributes rather than how much it hides.
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            break;
+        case BlendMode::MULTIPLY:
+            // Source acts as a filter over the destination: white leaves it
+            // unchanged, black knocks it out.
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
+        case BlendMode::SCREEN:
+            // Like ADD but the destination is attenuated by the source, so it
+            // approaches white asymptotically instead of clipping hard.
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            break;
+    }
 }
 
 // ── Vertex helpers ────────────────────────────────────────────────────────────

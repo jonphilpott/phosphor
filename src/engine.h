@@ -58,6 +58,12 @@ private:
     void  poll_hot_reload();                      // reload if the file changed
     void  render_frame(float dt);                 // run on_frame and present
 
+    // Draw the current Lua error across the top of the screen.
+    void  draw_error_banner(const std::string& msg);
+
+    // Print a scene error to stderr, throttled to once a second.
+    void  log_scene_error(const std::string& msg);
+
     // ── Member data ───────────────────────────────────────────────────────
 
     int           m_display_index;
@@ -76,6 +82,20 @@ private:
     ShaderPipeline m_pipeline;
 
     std::vector<OscMessage> m_osc_msgs;
+
+    // ── Transport ─────────────────────────────────────────────────────────
+    bool  m_paused     = false;   // space: hold the scene on its current frame
+    float m_time_scale = 1.0f;    // [ and ]: how fast time passes
+
+    // ── Scene error state ─────────────────────────────────────────────────
+    // Set when on_frame raises; cleared by the first frame that draws cleanly.
+    // While set, the engine holds the last good frame and shows the message.
+    std::string m_scene_error;
+    std::string m_logged_error;      // last message actually printed
+    Uint64      m_error_log_ticks = 0;
+
+    // Throttle for shader mtime polling — see poll_hot_reload().
+    Uint64      m_shader_poll_ticks = 0;
 
     Uint64 m_last_ticks  = 0;
     Uint64 m_fps_ticks   = 0;

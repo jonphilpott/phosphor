@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // Lua is a C library — we must wrap its headers in extern "C" when including
 // from C++ so the compiler knows not to mangle the symbol names for linking.
 extern "C" {
@@ -59,7 +61,19 @@ public:
     // Use with care — the stack must be balanced after every call.
     lua_State* L = nullptr;
 
+    // ── Error reporting ───────────────────────────────────────────────────
+    // The most recent error message, or empty if the last call succeeded.
+    // Callers clear it before a call and check it after, which distinguishes
+    // "the hook raised an error" from "the scene doesn't define that hook" —
+    // call_hook returns false for both.
+    const std::string& last_error()         const { return m_last_error; }
+    const std::string& last_error_context() const { return m_last_error_context; }
+    void clear_error() { m_last_error.clear(); m_last_error_context.clear(); }
+
 private:
-    // Print the error string on top of the stack, then pop it.
+    // Record the error string on top of the stack, then pop it.
     void report_error(const char* context);
+
+    std::string m_last_error;
+    std::string m_last_error_context;
 };

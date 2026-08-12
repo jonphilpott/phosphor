@@ -40,9 +40,11 @@ The binary lands at `./build/phosphor`.
 |------|-------------|
 | `-s <path>` | Scene file to load |
 | `-d <n>` | Display index (0 = primary) |
+| `-f` | Start fullscreen |
+| `--allow-remote-scene` | Honour OSC `/scene` from other machines (off by default) |
 | `-h` | Print help and exit |
 
-**Keyboard:** `F` toggles fullscreen · `Esc` quits
+**Keyboard:** `F` fullscreen · `Space` pause · `[` / `]` time scale · `\` reset speed · `R` reload · `Esc` quit
 
 ---
 
@@ -74,9 +76,11 @@ function on_osc(addr, ...)
 end
 ```
 
-Built-in globals: `screen_width`, `screen_height` (updated on resize and fullscreen toggle).
+Built-in globals: `screen_width`, `screen_height` (updated on resize and fullscreen toggle), and `elapsed()` for seconds since startup — the same clock shaders get as `u_time`.
 
-**Hot reload:** save the file while Phosphor is running — the Lua VM reloads automatically. GPU state is untouched.
+**Hot reload:** save the file while Phosphor is running — the Lua VM reloads automatically. GPU state is untouched. Fragment shaders in `shaders/` reload too, recompiling in place; if one fails to compile the previous version keeps running.
+
+**Errors don't stop the show:** a runtime error in `on_frame` holds the last good frame on screen and prints the message over it rather than going black, and throttles the log to once a second. Fix the file and the next clean frame clears it.
 
 ---
 
@@ -91,11 +95,16 @@ clear(r, g, b, a)
 set_color(r, g, b, a)          -- fill colour for rect/circle
 set_stroke(r, g, b, a)         -- stroke colour for lines/points
 set_stroke_weight(w)
+set_blend(mode)                -- "alpha" (default), "add", "multiply", "screen"
 draw_rect(x, y, w, h)
 draw_circle(cx, cy, r)
 draw_line(x1, y1, x2, y2)
 draw_point(x, y)
 ```
+
+`set_blend("add")` makes light accumulate instead of replace, so overlapping
+strokes brighten toward white — the phosphor/neon look, especially with
+`draw_feedback`. Blend mode resets to `"alpha"` each frame.
 
 ### Transform Stack
 
@@ -228,11 +237,18 @@ function on_osc(addr, ...)
 end
 ```
 
-**Engine-level address** (never forwarded to `on_osc`):
+**Engine-level addresses** (never forwarded to `on_osc`):
 
 ```
-/scene "scenes/matrix.lua"    ← load a new scene from any OSC client
+/scene "scenes/matrix.lua"    ← load a new scene
+/beat  0.0                    ← set u_beat and fire the on_beat(phase) hook
 ```
+
+`/scene` loads and executes a Lua file, so it is restricted: the path must end
+in `.lua` and must resolve (after following symlinks) inside the directory the
+startup scene came from, and by default it is honoured only from senders on
+this machine. Pass `--allow-remote-scene` to accept it from the network.
+Ordinary scene messages and `/beat` work from any host regardless.
 
 From SuperCollider:
 
@@ -298,7 +314,7 @@ phosphor/
 ├── shaders/        GLSL fragment shaders
 ├── assets/         Images for example scenes
 ├── docs/           index.html — full API reference
-└── vendor/         Embedded dependencies (Lua 5.4, GLAD, tinyosc, stb_image)
+└── vendor/         Embedded dependencies (Lua 5.4, GLAD, stb_image)
 ```
 
 ---
@@ -309,5 +325,8 @@ All vendored — no package manager needed beyond SDL2 and CMake:
 
 - **Lua 5.4** — scripting VM
 - **GLAD** — OpenGL function pointer loader
-- **tinyosc** — minimal OSC parser
 - **stb_image** — PNG/JPG loader
+
+OSC parsing is hand-written in `src/osc_parse.cpp` rather than vendored: the
+data arrives over UDP from anywhere on the network, so every read is bounds
+checked against the datagram length.

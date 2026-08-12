@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <ctime>
 
 // GLuint is a typedef for unsigned int — avoid pulling all of glad.h into
 // every translation unit that includes this header.
@@ -24,12 +25,34 @@ using GLint  = int;
 //   // result is in fbos[result_idx] / texs[result_idx]
 class ShaderPipeline {
 public:
+    ~ShaderPipeline();
+
     // Initialise GPU objects (quad VAO/VBO).
     // Must be called once after the OpenGL context is created.
     bool init();
 
     // Delete all GPU objects (programs, VAO, VBO).
     void shutdown();
+
+    // ── Live shader editing ───────────────────────────────────────────────
+    //
+    // Re-stat every loaded .frag and recompile the ones whose file changed on
+    // disk. Scenes already hot-reload when their .lua is saved; this extends
+    // the same "save and see it" loop to shaders, which previously needed a
+    // touch of the scene file to pick up an edit.
+    //
+    // If the edited source fails to compile, the existing program is kept and
+    // the error is printed — a typo mid-set leaves the visuals running rather
+    // than dropping the pass.
+    void poll_reload();
+
+    // Same, for every live pipeline in the process.
+    //
+    // Canvases own their own pipelines and are created and destroyed by Lua, so
+    // the engine has no handle on them; without this they would never see a
+    // shader edit now that set() skips rebuilding an unchanged chain.
+    // Instances register themselves in init() and drop out in shutdown().
+    static void poll_all();
 
     // ── Pipeline management ───────────────────────────────────────────────
 
@@ -69,6 +92,8 @@ private:
     // then stored here — same O(1) cost from frame 2 onward.
     struct ShaderEntry {
         std::string name;
+        std::string path;          // shaders/<name>.frag, for reload checks
+        time_t      mtime = 0;     // file mtime when it was last compiled
         GLuint prog        = 0;
         GLint  u_texture   = -1;
         GLint  u_resolution= -1;

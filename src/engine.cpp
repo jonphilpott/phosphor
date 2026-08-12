@@ -195,9 +195,21 @@ void Engine::load_scene(const char* path) {
     m_scene_mtime   = file_mtime(path);
     m_reload_pending = false;
 
+    m_lua.clear_error();
     if (m_lua.load_file(path)) {
         m_has_scene = true;
         m_lua.call_hook("on_load");
+    }
+
+    // Surface a failure to load or to run on_load on screen, the same way a
+    // failure inside on_frame is surfaced. A syntax error in a scene is the
+    // single most likely thing to go wrong while editing live, and the window
+    // is usually the only thing you can see from where you're standing.
+    m_scene_error = m_lua.last_error();
+    if (!m_scene_error.empty() && !m_lua.last_error_context().empty()) {
+        // on_load errors haven't been printed yet (load_file prints its own).
+        if (m_lua.last_error_context() == std::string("on_load"))
+            fprintf(stderr, "Lua error [on_load]: %s\n", m_scene_error.c_str());
     }
 }
 
@@ -311,10 +323,18 @@ void Engine::reload_scene() {
 
     // Step 3: Reload the scene file.
     m_has_scene = false;
+    m_lua.clear_error();
     if (m_lua.load_file(m_scene_path.c_str())) {
         m_has_scene = true;
         m_lua.call_hook("on_load");
     }
+
+    // Carry any load or on_load failure to the on-screen banner. Saving a file
+    // with a syntax error is the common case here: the banner appears, the last
+    // good frame stays up, and fixing the file clears both.
+    m_scene_error = m_lua.last_error();
+    if (!m_scene_error.empty() && m_lua.last_error_context() == std::string("on_load"))
+        fprintf(stderr, "Lua error [on_load]: %s\n", m_scene_error.c_str());
 
     // Step 4: Update the stored mtime so we don't immediately re-trigger.
     m_scene_mtime    = file_mtime(m_scene_path.c_str());
@@ -366,7 +386,9 @@ float Engine::update_timing() {
     // SDL_GetTicks64() returns milliseconds — divide by 1000 for seconds.
     const Uint64 now = SDL_GetTicks64();
     float dt = (now - m_last_ticks) / 1000.0f;
-    m_last_ticks = now;
+    m_last_ticks = now;   // always advance, even when paused, so that
+                          // unpausing doesn't hand the scene the whole pause
+                          // duration as one enormous dt
 
     // Clamp dt to a sane frame.  Anything that stalls the loop — a hot reload,
     // dragging the window, the compositor suspending us — produces one enormous
@@ -378,6 +400,14 @@ float Engine::update_timing() {
     if (dt > MAX_DT) dt = MAX_DT;
     if (dt < 0.0f)   dt = 0.0f;  // guard against the clock going backwards
 
+    // Transport. Pause hands the scene dt = 0 rather than skipping on_frame:
+    // the scene still redraws, so feedback trails hold still instead of the
+    // screen going black, and anything driven by elapsed() freezes in place.
+    if (m_paused) dt = 0.0f;
+    else          dt *= m_time_scale;
+
+    // The engine clock advances by the same scaled dt, which keeps u_time in
+    // the shaders in step with what the scene sees from elapsed().
     m_time += dt;
 
     // FPS counter — update the window title once per second.
@@ -487,6 +517,19 @@ bool Engine::handle_engine_osc(const OscMessage& msg) {
 // write) and we must not reload a half-written file.
 
 void Engine::poll_hot_reload() {
+    // Shaders first: check the loaded .frag files four times a second.
+    //
+    // Every pipeline in the process is polled, including the ones canvases own,
+    // which the engine otherwise has no handle on. It's throttled rather than
+    // per-frame only because there is no reason to stat the same handful of
+    // files sixty times a second — a quarter of a second still feels instant
+    // when you hit save.
+    const Uint64 ticks = SDL_GetTicks64();
+    if (ticks - m_shader_poll_ticks >= 250) {
+        m_shader_poll_ticks = ticks;
+        ShaderPipeline::poll_all();
+    }
+
     if (m_scene_path.empty()) return;
 
     const time_t new_mtime = file_mtime(m_scene_path.c_str());
@@ -506,28 +549,118 @@ void Engine::poll_hot_reload() {
 // draw calls land in the scene FBO and go through the post-process pipeline.
 
 void Engine::render_frame(float dt) {
-    if (!m_has_scene) {
-        // No scene loaded — say so on screen rather than leaving the window
-        // black, which is indistinguishable from a scene that draws nothing.
-        m_renderer.begin_frame();
-        m_renderer.set_color(0.0f, 0.9f, 0.4f, 1.0f);
-        text_render::draw(m_renderer, 24.0f, 24.0f,
-                          "phosphor\n\nno scene loaded\n"
-                          "run with:  phosphor -s scenes/test.lua", 2.0f);
-        m_renderer.end_frame(&m_pipeline, m_time, m_beat);
-        return;
-    }
+    // Publish the clock before the scene runs, so elapsed() inside on_frame
+    // reports this frame's time rather than the previous frame's.
+    m_renderer.set_time(m_time);
 
     // Reset the renderer's CPU vertex buffer and transform stack for this frame.
     m_renderer.begin_frame();
 
+    if (!m_has_scene) {
+        if (m_scene_error.empty()) {
+            // Nothing was ever asked for — say so rather than leaving the
+            // window black, which is indistinguishable from a scene that draws
+            // nothing at all.
+            m_renderer.set_color(0.0f, 0.9f, 0.4f, 1.0f);
+            text_render::draw(m_renderer, 24.0f, 24.0f,
+                              "phosphor\n\nno scene loaded\n"
+                              "run with:  phosphor -s scenes/test.lua", 2.0f);
+        } else {
+            // A scene was asked for but failed to load — typically a syntax
+            // error just saved into the file being performed with. Put the last
+            // good frame back and show the error over it; the visuals hold
+            // rather than dropping to black while the file is fixed.
+            m_renderer.draw_feedback(1.0f, 1.0f, 0.0f);
+            draw_error_banner(m_scene_error);
+        }
+        m_renderer.end_frame(&m_pipeline, m_time, m_beat);
+        return;
+    }
+
     // Call the Lua on_frame(dt) hook.  Scripts call clear(), draw_rect(), etc.
     // — these accumulate into the renderer's vertex buffer.
+    m_lua.clear_error();
     m_lua.call_hook("on_frame", (double)dt);
+
+    if (m_lua.last_error().empty()) {
+        // Frame drew cleanly — forget any error we were showing.
+        m_scene_error.clear();
+    } else {
+        // ── Keep the show running ─────────────────────────────────────────
+        //
+        // A runtime error in on_frame used to leave a black screen and sixty
+        // stderr lines a second, which during a performance is the worst of
+        // both worlds: nothing to look at and nothing readable to debug from.
+        //
+        // Instead: throw away the half-drawn frame, put the last complete one
+        // back up, and print the message over it. The visuals freeze on the
+        // last good image rather than dying, and the error is legible from
+        // across the room — save a fix and the hot reload picks straight up.
+        m_scene_error = m_lua.last_error();
+        log_scene_error(m_scene_error);
+
+        m_renderer.discard_verts();
+
+        // The last fully composited frame lives in the feedback texture, which
+        // end_frame() writes every frame. Blit it back at full opacity.
+        m_renderer.draw_feedback(1.0f, 1.0f, 0.0f);
+        draw_error_banner(m_scene_error);
+    }
 
     // Flush vertices, run the post-process pipeline, blit to the screen, then
     // copy the result into the feedback FBO for the next frame.
     m_renderer.end_frame(&m_pipeline, m_time, m_beat);
+}
+
+// ── draw_error_banner() ───────────────────────────────────────────────────────
+// Draws the Lua error across the top of the screen on a dark strip.
+// Wrapped by character count, since the font is fixed-width and every glyph is
+// exactly 8*scale pixels wide.
+
+void Engine::draw_error_banner(const std::string& msg) {
+    const float scale = 2.0f;
+    const float char_w = 8.0f * scale;
+    const float line_h = 8.0f * scale;
+    const float pad    = 10.0f;
+
+    // How many characters fit on a line, leaving a margin either side.
+    int cols = (int)((m_draw_w - pad * 2) / char_w);
+    if (cols < 16) cols = 16;
+
+    // Wrap the message into fixed-width lines. Lua error messages lead with
+    // "file:line:", which is the part you most want to read, so a plain
+    // character wrap keeps it at the front where it belongs.
+    std::string wrapped = "LUA ERROR\n";
+    int lines = 1;
+    for (size_t i = 0; i < msg.size(); i += (size_t)cols) {
+        wrapped += msg.substr(i, (size_t)cols);
+        wrapped += '\n';
+        lines++;
+        if (lines >= 8) break;   // don't let a huge message cover the visuals
+    }
+
+    // Dark strip behind the text so it stays readable over any scene.
+    m_renderer.set_color(0.0f, 0.0f, 0.0f, 0.75f);
+    m_renderer.draw_rect(0.0f, 0.0f, (float)m_draw_w, lines * line_h + pad * 2);
+
+    m_renderer.set_color(1.0f, 0.3f, 0.25f, 1.0f);
+    text_render::draw(m_renderer, pad, pad, wrapped.c_str(), scale);
+}
+
+// ── log_scene_error() ─────────────────────────────────────────────────────────
+// Prints a scene error to stderr at most once a second, and always when the
+// message changes.  on_frame runs every frame, so an unthrottled print would
+// produce sixty identical lines a second and scroll away anything useful.
+
+void Engine::log_scene_error(const std::string& msg) {
+    const Uint64 now = SDL_GetTicks64();
+    const bool   changed = (msg != m_logged_error);
+
+    if (changed || now - m_error_log_ticks >= 1000) {
+        fprintf(stderr, "Lua error [on_frame]: %s\n", msg.c_str());
+        m_logged_error   = msg;
+        m_error_log_ticks = now;
+    }
 }
 
 // ── handle_events() ───────────────────────────────────────────────────────────
@@ -543,8 +676,43 @@ void Engine::handle_events() {
 
             case SDL_KEYDOWN:
                 switch (ev.key.keysym.sym) {
-                    case SDLK_ESCAPE: m_running = false;     break;
-                    case SDLK_f:      toggle_fullscreen();   break;
+                    case SDLK_ESCAPE: m_running = false;   break;
+                    case SDLK_f:      toggle_fullscreen(); break;
+
+                    // ── Transport ────────────────────────────────────────
+                    // Space: freeze the scene on its current frame. Useful for
+                    // holding an image while you edit the code behind it.
+                    case SDLK_SPACE:
+                        m_paused = !m_paused;
+                        printf("[transport] %s\n", m_paused ? "paused" : "running");
+                        break;
+
+                    // [ and ]: halve or double the rate time passes. Clamped to
+                    // a 6-stop range either side so a stray keypress can't stop
+                    // time dead or send the scene into the far future.
+                    case SDLK_LEFTBRACKET:
+                        m_time_scale *= 0.5f;
+                        if (m_time_scale < 0.015625f) m_time_scale = 0.015625f;
+                        printf("[transport] time x%.4g\n", (double)m_time_scale);
+                        break;
+                    case SDLK_RIGHTBRACKET:
+                        m_time_scale *= 2.0f;
+                        if (m_time_scale > 8.0f) m_time_scale = 8.0f;
+                        printf("[transport] time x%.4g\n", (double)m_time_scale);
+                        break;
+
+                    // Backslash: back to normal speed, unpaused.
+                    case SDLK_BACKSLASH:
+                        m_time_scale = 1.0f;
+                        m_paused     = false;
+                        printf("[transport] time x1, running\n");
+                        break;
+
+                    // R: reload the scene now, without waiting for a file save.
+                    // Handy for re-running on_load to reseed an automaton.
+                    case SDLK_r:
+                        if (!m_scene_path.empty()) reload_scene();
+                        break;
                 }
                 break;
 

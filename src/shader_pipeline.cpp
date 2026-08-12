@@ -6,6 +6,19 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
+#include <sys/stat.h>   // stat() for shader mtime polling
+
+// Every live pipeline, so poll_all() can reach the canvas-owned ones the engine
+// never sees. Only ever touched from the main thread, which is the only thread
+// that may make GL calls anyway.
+static std::vector<ShaderPipeline*> g_pipelines;
+
+// Modification time of a file, or 0 if it can't be stat'd.
+static time_t shader_mtime(const char* path) {
+    struct stat st;
+    return (stat(path, &st) == 0) ? st.st_mtime : 0;
+}
 
 // ── Shared vertex shader (fullscreen quad) ────────────────────────────────────
 //
@@ -70,7 +83,18 @@ static char* read_file(const char* path) {
 
 // ── ShaderPipeline::init() ────────────────────────────────────────────────────
 
+ShaderPipeline::~ShaderPipeline() {
+    // shutdown() normally does this, but a pipeline destroyed without it must
+    // not leave a dangling pointer in the registry for poll_all() to follow.
+    auto it = std::find(g_pipelines.begin(), g_pipelines.end(), this);
+    if (it != g_pipelines.end()) g_pipelines.erase(it);
+}
+
 bool ShaderPipeline::init() {
+    // Register for shader hot-reload polling (see poll_all).
+    if (std::find(g_pipelines.begin(), g_pipelines.end(), this) == g_pipelines.end())
+        g_pipelines.push_back(this);
+
     // Build a fullscreen quad covering NDC (-1,-1) to (1,1).
     // Format per vertex: [ndc_x, ndc_y, u, v]  — 4 floats.
     //
@@ -111,6 +135,9 @@ bool ShaderPipeline::init() {
 // ── ShaderPipeline::shutdown() ────────────────────────────────────────────────
 
 void ShaderPipeline::shutdown() {
+    auto it = std::find(g_pipelines.begin(), g_pipelines.end(), this);
+    if (it != g_pipelines.end()) g_pipelines.erase(it);
+
     clear();
     if (m_quad_vao) { glDeleteVertexArrays(1, &m_quad_vao); m_quad_vao = 0; }
     if (m_quad_vbo) { glDeleteBuffers(1, &m_quad_vbo);      m_quad_vbo = 0; }
@@ -123,6 +150,14 @@ bool ShaderPipeline::load_shader(ShaderEntry& entry) {
     // which is the project root when running ./build/phosphor from there).
     char path[256];
     snprintf(path, sizeof(path), "shaders/%s.frag", entry.name.c_str());
+    entry.path = path;
+
+    // Record the mtime *before* reading, not after. If the file is written
+    // again while we're compiling it, the stored time then belongs to the
+    // version we actually read, so poll_reload() still sees a difference and
+    // picks up the newer one — rather than storing the newer time against the
+    // older source and never reloading.
+    entry.mtime = shader_mtime(path);
 
     char* frag_src = read_file(path);
     if (!frag_src) return false;
@@ -193,6 +228,47 @@ void ShaderPipeline::clear() {
 
 void ShaderPipeline::set_uniform(const std::string& name, float value) {
     m_uniforms[name] = value;
+}
+
+// ── Shader hot reload ─────────────────────────────────────────────────────────
+
+void ShaderPipeline::poll_reload() {
+    for (auto& s : m_shaders) {
+        if (s.path.empty()) continue;
+
+        const time_t now_mtime = shader_mtime(s.path.c_str());
+        // 0 means the file vanished mid-edit (some editors delete and rewrite);
+        // leave the running program alone and pick it up when it reappears.
+        if (now_mtime == 0 || now_mtime == s.mtime) continue;
+
+        // Compile into a fresh entry rather than over the live one, so a
+        // failure leaves the current program untouched and still rendering.
+        ShaderEntry candidate;
+        candidate.name = s.name;
+        if (!load_shader(candidate)) {
+            // Adopt the new mtime anyway: the edit is broken, and without this
+            // we would retry the same failing compile on every single frame and
+            // flood the log with the same GLSL error.  The next *save* changes
+            // the mtime again and gets another attempt.
+            s.mtime = now_mtime;
+            fprintf(stderr, "[shader reload] %s failed to compile — keeping the "
+                            "previous version\n", s.name.c_str());
+            continue;
+        }
+
+        // Swap in the new program and drop the old one. The cached custom
+        // uniform locations belong to the old program object and are invalid
+        // for the new one; candidate starts with an empty cache, which is
+        // repopulated lazily by apply().
+        if (s.prog) glDeleteProgram(s.prog);
+        s = std::move(candidate);
+
+        printf("[shader reload] %s\n", s.name.c_str());
+    }
+}
+
+void ShaderPipeline::poll_all() {
+    for (ShaderPipeline* p : g_pipelines) p->poll_reload();
 }
 
 // ── ShaderPipeline::apply() ───────────────────────────────────────────────────
