@@ -52,6 +52,7 @@ add_executable(phosphor
     src/main.cpp
     src/engine.cpp
     src/osc.cpp
+    src/osc_parse.cpp
     src/lua_state.cpp
     src/lua_bindings.cpp
     src/lua_automata.cpp
@@ -65,7 +66,6 @@ add_executable(phosphor
     src/stb_image_impl.cpp
     src/renderer.cpp
     src/shader_pipeline.cpp
-    vendor/tinyosc.c
 )
 
 # stb_image.h lives in vendor/ — make it visible to any source that includes it.

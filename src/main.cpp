@@ -9,18 +9,25 @@
 //   -d N      Open on display N (0 = primary, 1 = first external, etc.)
 //   -s path   Load a Lua scene file at startup (e.g. -s scenes/test.lua)
 //   -f        Start in fullscreen (same as pressing F after launch)
+//   --allow-remote-scene   Let off-machine OSC clients send /scene
 
 static void print_usage(const char* argv0) {
     fprintf(stderr, "Usage: %s [-d <display_index>] [-s <scene_path>] [-f]\n", argv0);
     fprintf(stderr, "  -d N      Open on display N (default: 0)\n");
     fprintf(stderr, "  -s path   Load scene file at startup\n");
     fprintf(stderr, "  -f        Start fullscreen\n");
+    fprintf(stderr, "  --allow-remote-scene\n"
+                    "            Honour OSC /scene from other machines.  Off by default:\n"
+                    "            /scene executes a Lua file, so accepting it from the\n"
+                    "            network lets anyone who can reach port 9000 run code.\n"
+                    "            Scenes must still resolve inside the -s scene directory.\n");
 }
 
 int main(int argc, char* argv[]) {
     int         display_index = 0;
     const char* scene_path    = nullptr;
     bool        start_fullscreen = false;
+    bool        allow_remote_scene = false;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
@@ -29,6 +36,8 @@ int main(int argc, char* argv[]) {
             scene_path = argv[++i];
         } else if (strcmp(argv[i], "-f") == 0) {
             start_fullscreen = true;
+        } else if (strcmp(argv[i], "--allow-remote-scene") == 0) {
+            allow_remote_scene = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -50,6 +59,16 @@ int main(int argc, char* argv[]) {
     // for why it must be deferred on Wayland.
     if (start_fullscreen) {
         engine.request_fullscreen();
+    }
+
+    // Establish where OSC-loaded scenes are allowed to come from before any
+    // OSC message can be dispatched: the directory holding the startup scene,
+    // or the working directory when launched without -s.
+    engine.set_scene_root(scene_path);
+    engine.set_allow_remote_scene(allow_remote_scene);
+    if (allow_remote_scene) {
+        fprintf(stderr, "Warning: remote OSC /scene enabled — any host that can "
+                        "reach port 9000 may load scenes from the scene directory.\n");
     }
 
     // Load the startup scene after init so the GL context is ready and

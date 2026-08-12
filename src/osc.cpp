@@ -1,8 +1,5 @@
 #include "osc.h"
-
-// tinyosc is a C library — we wrap it in extern "C" (though tinyosc.h already
-// does this, belt-and-suspenders when including from C++).
-#include "../vendor/tinyosc.h"
+#include "osc_parse.h"
 
 // POSIX socket API — available on both macOS and Linux.
 #include <sys/socket.h>
@@ -18,9 +15,6 @@
 // Maximum UDP datagram we'll accept.  OSC messages in practice are tiny
 // (a few hundred bytes), but 4096 gives plenty of headroom.
 static constexpr int RECV_BUFSIZE = 4096;
-
-// Forward declaration — defined below recv_loop.
-static OscMessage parse_message(tosc_message* msg);
 
 // ── OscMessage convenience accessors ─────────────────────────────────────────
 
@@ -142,85 +136,38 @@ void OscServer::recv_loop() {
         int ready = select(m_socket + 1, &fds, nullptr, nullptr, &tv);
         if (ready <= 0) continue;  // timeout or error — loop and check m_running
 
-        // Receive one UDP datagram.  recvfrom fills in the sender address but
-        // we don't need it — any sender is welcome (multi-client works for free).
+        // Receive one UDP datagram.  We keep the sender address: it is what
+        // tells us whether the packet came from this machine or from the
+        // network, which decides whether /scene is allowed to act on it.
         sockaddr_in sender{};
         socklen_t   sender_len = sizeof(sender);
-        int nbytes = recvfrom(m_socket, buf, RECV_BUFSIZE - 1, 0,
-                              (sockaddr*)&sender, &sender_len);
+        ssize_t nbytes = recvfrom(m_socket, buf, sizeof(buf), 0,
+                                  (sockaddr*)&sender, &sender_len);
         if (nbytes <= 0) continue;
 
-        // Step 1: Check if this is a bundle (multiple messages in one datagram).
-        // OSC bundles start with the string "#bundle".
-        if (tosc_isBundle(buf)) {
-            tosc_bundle bundle;
-            tosc_parseBundle(&bundle, buf, nbytes);
-            tosc_message msg;
-            while (tosc_getNextMessage(&bundle, &msg)) {
-                OscMessage parsed = parse_message(&msg);
-                if (!parsed.address.empty()) {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_queue.push(std::move(parsed));
-                }
-            }
-        } else {
-            // Step 2: Single message.
-            tosc_message msg;
-            if (tosc_parseMessage(&msg, buf, nbytes) == 0) {
-                OscMessage parsed = parse_message(&msg);
-                if (!parsed.address.empty()) {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_queue.push(std::move(parsed));
-                }
+        // Is the sender on loopback (127.0.0.0/8)?  s_addr is in network byte
+        // order, so ntohl first, then check the top octet.
+        const bool loopback =
+            (sender.sin_family == AF_INET) &&
+            ((ntohl(sender.sin_addr.s_addr) >> 24) == 127);
+
+        // Parse the whole datagram.  parse_packet handles both plain messages
+        // and bundles, and never reads past nbytes — no part of the packet is
+        // trusted to be well-formed or terminated.
+        m_parsed.clear();
+        osc_parse::parse_packet(buf, (size_t)nbytes, m_parsed);
+
+        if (m_parsed.empty()) continue;
+
+        // Stamp the sender's locality onto each message, then hand the batch to
+        // the main thread.  One lock for the whole datagram rather than one per
+        // message keeps the critical section short.
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (auto& parsed : m_parsed) {
+                parsed.from_loopback = loopback;
+                m_queue.push(std::move(parsed));
             }
         }
     }
-}
-
-// ── parse_message() — convert tinyosc struct to our owned OscMessage ─────────
-// Static free function — only used within this translation unit.
-// tinyosc's message struct just points into the recv buffer; this function
-// copies everything into a fully-owned OscMessage before the buffer is reused.
-
-static OscMessage parse_message(tosc_message* msg) {
-    OscMessage out;
-
-    // Copy the address string immediately — tinyosc only points into our recv
-    // buffer which will be overwritten on the next recvfrom().
-    const char* addr = tosc_getAddress(msg);
-    if (!addr || addr[0] != '/') return out;   // not a valid OSC address
-    out.address = addr;
-
-    // Iterate the format string (e.g. "ifs" = int, float, string).
-    // Note: tosc_getFormat returns the format WITHOUT the leading comma —
-    // it stores o->format = buffer + i + 1 (past the comma) in parseMessage.
-    // So we start at index 0, not 1.
-    const char* fmt = tosc_getFormat(msg);
-    if (!fmt) return out;
-
-    for (const char* t = fmt; *t != '\0'; ++t) {
-        OscArg arg;
-        arg.type = *t;
-        switch (*t) {
-            case 'i':
-                arg.i = tosc_getNextInt32(msg);
-                break;
-            case 'f':
-                arg.f = tosc_getNextFloat(msg);
-                break;
-            case 's': {
-                // getNextString returns a pointer into the recv buffer — copy it.
-                const char* sv = tosc_getNextString(msg);
-                arg.s = sv ? sv : "";
-                break;
-            }
-            default:
-                // Unknown type (blob, timetag, MIDI, etc.) — skip silently.
-                // tinyosc advances the read head internally so we can continue.
-                continue;
-        }
-        out.args.push_back(std::move(arg));
-    }
-
-    return out;
 }
