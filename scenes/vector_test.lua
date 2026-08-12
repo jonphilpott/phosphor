@@ -25,8 +25,6 @@ local MAX_SPEED = 260     -- pixels/sec
 local TRAIL     = 0.90    -- feedback: higher = longer phosphor trail
 
 function on_load()
-    shader_set("scanlines")
-
     -- Build the field only if we do not already have one.
     --
     -- This `or` idiom is the whole trick to persist: on a first run the field is
