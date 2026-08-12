@@ -78,6 +78,15 @@ public:
     // beat  — beat phase [0..1), forwarded to u_beat in shaders
     void end_frame(ShaderPipeline* pipeline, float time, float beat);
 
+    // Master output level, 0..1, applied to the screen blit only.
+    //
+    // Deliberately NOT applied to the feedback copy: the feedback texture is an
+    // input to the next frame, so dimming it there would compound every frame
+    // and eat the trails rather than just dimming the output. Fading to black
+    // must leave the scene running untouched underneath.
+    void set_master(float gain) { m_master = gain < 0 ? 0 : (gain > 1 ? 1 : gain); }
+    float master() const { return m_master; }
+
     // Notify the renderer that the drawable size changed (window resize).
     // Recreates all FBOs at the new dimensions.
     void set_size(int w, int h);
@@ -186,7 +195,8 @@ private:
 
     // Blit a texture onto the currently-bound framebuffer using the blit shader.
     // transform_mat9 is a column-major mat3 (9 floats) applied to the quad vertices.
-    void blit_texture(unsigned int tex, const float transform_mat9[9], float alpha);
+    void blit_texture(unsigned int tex, const float transform_mat9[9], float alpha,
+                      float gain = 1.0f);
 
     // ── GPU objects — geometry pipeline ──────────────────────────────────
     unsigned int m_vao          = 0;
@@ -215,10 +225,12 @@ private:
 
     // Blit shader: samples a texture and outputs it with an optional
     // scale/rotate transform and alpha multiplier.
+    float        m_master           = 1.0f;
     unsigned int m_blit_prog        = 0;
     int          m_blit_u_texture   = -1;
     int          m_blit_u_transform = -1;
     int          m_blit_u_alpha     = -1;
+    int          m_blit_u_gain      = -1;
 
     // Image shader: draws a textured quad at a pixel-space rect with a UV sub-range.
     // Used by draw_image() for image.load() and sprite_sheet draws.

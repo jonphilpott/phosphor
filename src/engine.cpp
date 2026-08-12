@@ -3,6 +3,7 @@
 #include "lua_text.h"   // text_render::draw — for the "no scene loaded" message
 #include "lua_persist.h"
 #include "lua_params.h"
+#include "lua_clock.h"
 #include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
@@ -340,6 +341,10 @@ float Engine::update_timing() {
     m_time += dt;
 
     // FPS counter — update the window title once per second.
+    // Musical time advances on the wall clock, independent of pause and time
+    // scale — the room's tempo does not care what the visuals are doing.
+    lua_clock::update(now / 1000.0);
+
     m_fps_frames++;
     if (now - m_fps_ticks >= 1000) {
         char title[64];
@@ -413,6 +418,10 @@ bool Engine::handle_engine_osc(const OscMessage& msg) {
     //   TempoClock.default.schedAbs(TempoClock.default.nextBar, {
     //       ~p.sendMsg("/beat", 0.0); nil });
     if (msg.address == "/beat") {
+        // Wall clock, not the engine clock: pausing or slowing the visuals must
+        // not distort the tempo estimate.
+        lua_clock::on_beat(SDL_GetTicks64() / 1000.0);
+
         if (!msg.args.empty()) {
             if      (msg.args[0].type == 'f') m_beat = msg.args[0].f;
             else if (msg.args[0].type == 'i') m_beat = (float)msg.args[0].i;
@@ -533,9 +542,80 @@ void Engine::render_frame(float dt) {
         draw_error_banner(m_scene_error);
     }
 
+    if (m_test_pattern)  draw_test_pattern();
+    if (m_param_overlay) draw_param_overlay();
+
+    // Blackout wins over the brightness setting, and neither touches the scene:
+    // the master level is applied only where the finished frame is blitted to
+    // the screen, so the simulation and the feedback buffer carry on untouched
+    // and restoring the output brings back a live image.
+    m_renderer.set_master(m_blackout ? 0.0f : m_brightness);
+
     // Flush vertices, run the post-process pipeline, blit to the screen, then
     // copy the result into the feedback FBO for the next frame.
     m_renderer.end_frame(&m_pipeline, m_time, m_beat);
+}
+
+// ── draw_test_pattern() ───────────────────────────────────────────────────────
+// A grid, a border and centre marks, for squaring up a projector before doors.
+// Drawn over the scene rather than replacing it, so you can align while the
+// visuals run.
+
+void Engine::draw_test_pattern() {
+    const float w = (float)m_draw_w, h = (float)m_draw_h;
+    const float step = w / 16.0f;
+
+    m_renderer.set_blend(BlendMode::ALPHA);
+    m_renderer.set_stroke(0.0f, 0.9f, 0.5f, 0.5f);
+    m_renderer.set_stroke_weight(1.0f);
+
+    for (float x = 0; x <= w; x += step) m_renderer.draw_line(x, 0, x, h);
+    for (float y = 0; y <= h; y += step) m_renderer.draw_line(0, y, w, y);
+
+    // Border, brighter — this is the edge you are actually aligning to.
+    m_renderer.set_stroke(1.0f, 1.0f, 1.0f, 0.9f);
+    m_renderer.set_stroke_weight(4.0f);
+    m_renderer.draw_line(0, 0, w, 0);
+    m_renderer.draw_line(w, 0, w, h);
+    m_renderer.draw_line(w, h, 0, h);
+    m_renderer.draw_line(0, h, 0, 0);
+
+    // Centre cross and a circle, which shows up any aspect-ratio stretch:
+    // a circle only stays circular if the pixels are square.
+    m_renderer.draw_line(w * 0.5f, h * 0.4f, w * 0.5f, h * 0.6f);
+    m_renderer.draw_line(w * 0.4f, h * 0.5f, w * 0.6f, h * 0.5f);
+    m_renderer.set_color(1.0f, 1.0f, 1.0f, 0.15f);
+    m_renderer.draw_circle(w * 0.5f, h * 0.5f, h * 0.25f);
+
+    m_renderer.set_color(1.0f, 1.0f, 1.0f, 1.0f);
+    char label[64];
+    snprintf(label, sizeof(label), "%d x %d", m_draw_w, m_draw_h);
+    text_render::draw(m_renderer, 12.0f, h - 12.0f - 8.0f * text_scale_for_display(),
+                      label, text_scale_for_display());
+}
+
+// ── draw_param_overlay() ──────────────────────────────────────────────────────
+// The declared parameters and their current values, on a dark panel. A star
+// marks parameters currently under live OSC control rather than following the
+// value written in the scene file.
+
+void Engine::draw_param_overlay() {
+    const std::string text = lua_params::overlay_text();
+    if (text.empty()) return;
+
+    const float scale = text_scale_for_display() * 0.75f;
+    const float line_h = 8.0f * scale;
+    const float pad    = 8.0f;
+
+    int lines = 1;
+    for (char c : text) if (c == '\n') lines++;
+
+    m_renderer.set_blend(BlendMode::ALPHA);
+    m_renderer.set_color(0.0f, 0.0f, 0.0f, 0.7f);
+    m_renderer.draw_rect(0.0f, 0.0f, 34.0f * 8.0f * scale + pad * 2,
+                         lines * line_h + pad * 2);
+    m_renderer.set_color(0.6f, 0.9f, 0.8f, 1.0f);
+    text_render::draw(m_renderer, pad, pad, text.c_str(), scale);
 }
 
 // ── text_scale_for_display() ──────────────────────────────────────────────────
@@ -655,6 +735,44 @@ void Engine::handle_events() {
                     // Handy for re-running on_load to reseed an automaton.
                     case SDLK_r:
                         if (!m_scene_path.empty()) reload_scene();
+                        break;
+
+                    // ── Live output ──────────────────────────────────────
+                    // B: blackout. The scene keeps running underneath and the
+                    // feedback buffer keeps accumulating, so restoring brings
+                    // back a live image rather than a frozen one — this is the
+                    // "something is wrong, kill the projector" key.
+                    case SDLK_b:
+                        m_blackout = !m_blackout;
+                        printf("[output] %s\n", m_blackout ? "BLACKOUT" : "live");
+                        break;
+
+                    // - and =: master level, for venue brightness.
+                    case SDLK_MINUS:
+                        m_brightness -= 0.1f;
+                        if (m_brightness < 0.0f) m_brightness = 0.0f;
+                        printf("[output] brightness %.0f%%\n", m_brightness * 100.0f);
+                        break;
+                    case SDLK_EQUALS:
+                        m_brightness += 0.1f;
+                        if (m_brightness > 1.0f) m_brightness = 1.0f;
+                        printf("[output] brightness %.0f%%\n", m_brightness * 100.0f);
+                        break;
+
+                    // T: alignment grid, for lining up a projector before doors.
+                    case SDLK_t:
+                        m_test_pattern = !m_test_pattern;
+                        break;
+
+                    // P: what parameters exist and what they currently hold.
+                    case SDLK_p:
+                        m_param_overlay = !m_param_overlay;
+                        break;
+
+                    // 0: put every parameter back to the value written in the
+                    // scene file, abandoning live OSC control.
+                    case SDLK_0:
+                        lua_params::reset_to_defaults();
                         break;
                 }
                 break;

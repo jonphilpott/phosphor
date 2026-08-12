@@ -65,6 +65,7 @@ add_executable(phosphor
     src/lua_text.cpp
     src/lua_vec.cpp
     src/lua_params.cpp
+    src/lua_clock.cpp
     src/lua_easing.cpp
     src/stb_image_impl.cpp
     src/renderer.cpp

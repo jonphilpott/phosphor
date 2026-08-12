@@ -197,11 +197,21 @@ static int l_canvas_draw(lua_State* L) {
 //   c:set_uniform("u_max_iter",  128)
 //   c:finish("julia")
 static int l_canvas_set_uniform(lua_State* L) {
-    Canvas*     c     = check_canvas(L);
-    const char* name  = luaL_checkstring(L, 2);
-    float       value = (float)luaL_checknumber(L, 3);
-    if (c->pipeline)
-        c->pipeline->set_uniform(name, value);
+    Canvas*     c    = check_canvas(L);
+    const char* name = luaL_checkstring(L, 2);
+    float v[4];
+    const int n = lua_bindings::read_uniform_args(L, 3, v);
+    if (c->pipeline) c->pipeline->set_uniform(name, v, n);
+    return 0;
+}
+
+// canvas:set_data(name, table) — the canvas-local twin of shader_set_data.
+static int l_canvas_set_data(lua_State* L) {
+    Canvas*     c    = check_canvas(L);
+    const char* name = luaL_checkstring(L, 2);
+    std::vector<float> values;
+    const int n = lua_bindings::read_data_table(L, 3, values);
+    if (c->pipeline && n > 0) c->pipeline->set_data(name, values.data(), n);
     return 0;
 }
 
@@ -277,6 +287,7 @@ void lua_canvas::register_all(lua_State* L) {
         { "finish",      l_canvas_finish      },
         { "draw",        l_canvas_draw        },
         { "set_uniform", l_canvas_set_uniform },
+        { "set_data",    l_canvas_set_data    },
         { "width",       l_canvas_width       },
         { "height",      l_canvas_height      },
         { nullptr, nullptr }

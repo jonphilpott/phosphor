@@ -2,6 +2,7 @@
 #include <glad/glad.h>
 #include "shader_pipeline.h"
 #include "gl_utils.h"
+#include "lua_clock.h"
 
 #include <cstdio>
 #include <cstring>
@@ -139,6 +140,7 @@ void ShaderPipeline::shutdown() {
     if (it != g_pipelines.end()) g_pipelines.erase(it);
 
     clear();
+    clear_data();
     if (m_quad_vao) { glDeleteVertexArrays(1, &m_quad_vao); m_quad_vao = 0; }
     if (m_quad_vbo) { glDeleteBuffers(1, &m_quad_vbo);      m_quad_vbo = 0; }
 }
@@ -184,6 +186,7 @@ bool ShaderPipeline::load_shader(ShaderEntry& entry) {
     entry.u_resolution = glGetUniformLocation(entry.prog, "u_resolution");
     entry.u_time       = glGetUniformLocation(entry.prog, "u_time");
     entry.u_beat       = glGetUniformLocation(entry.prog, "u_beat");
+    entry.u_beat_phase = glGetUniformLocation(entry.prog, "u_beat_phase");
 
     return true;
 }
@@ -218,6 +221,11 @@ void ShaderPipeline::add(const std::string& name) {
     // If load fails, the error was already printed — silently skip the shader.
 }
 
+void ShaderPipeline::clear_data() {
+    for (auto& kv : m_data) if (kv.second.tex) glDeleteTextures(1, &kv.second.tex);
+    m_data.clear();
+}
+
 void ShaderPipeline::clear() {
     for (auto& s : m_shaders) {
         if (s.prog) glDeleteProgram(s.prog);
@@ -226,8 +234,41 @@ void ShaderPipeline::clear() {
     m_active_names.clear();
 }
 
-void ShaderPipeline::set_uniform(const std::string& name, float value) {
-    m_uniforms[name] = value;
+void ShaderPipeline::set_uniform(const std::string& name, const float* v, int n) {
+    if (n < 1) n = 1;
+    if (n > 4) n = 4;
+    UniformValue& u = m_uniforms[name];
+    u.n = n;
+    for (int i = 0; i < n; ++i) u.v[i] = v[i];
+}
+
+void ShaderPipeline::set_data(const std::string& name, const float* v, int count) {
+    if (count < 1) return;
+
+    DataTexture& d = m_data[name];
+    if (!d.tex) {
+        glGenTextures(1, &d.tex);
+        glBindTexture(GL_TEXTURE_2D, d.tex);
+        // NEAREST and CLAMP: this is data, not an image. Interpolating between
+        // adjacent bands would invent values that were never measured, and
+        // wrapping would make the last band bleed into the first.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, d.tex);
+    }
+
+    // A single-channel float texture, one texel per element, one row tall.
+    // Reallocate only when the length changes; otherwise overwrite in place.
+    if (count != d.count) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, count, 1, 0, GL_RED, GL_FLOAT, v);
+        d.count = count;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, count, 1, GL_RED, GL_FLOAT, v);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 // ── Shader hot reload ─────────────────────────────────────────────────────────
@@ -322,6 +363,25 @@ int ShaderPipeline::apply(GLuint fbos[2], GLuint texs[2], int w, int h,
         if (shader.u_resolution>= 0) glUniform2f(shader.u_resolution, (float)w, (float)h);
         if (shader.u_time      >= 0) glUniform1f(shader.u_time, time);
         if (shader.u_beat      >= 0) glUniform1f(shader.u_beat, beat);
+        // The continuously advancing position within the current beat, so a
+        // shader can be driven by musical time rather than only nudged when a
+        // /beat message happens to land.
+        if (shader.u_beat_phase>= 0) glUniform1f(shader.u_beat_phase,
+                                                 lua_clock::beat_phase());
+
+        // Bind any data textures to units 1 and up — unit 0 is the pass input.
+        int unit = 1;
+        for (const auto& kv : m_data) {
+            if (unit > 7) break;               // plenty; guards against silliness
+            GLint loc = glGetUniformLocation(shader.prog, kv.first.c_str());
+            if (loc >= 0) {
+                glActiveTexture(GL_TEXTURE0 + unit);
+                glBindTexture(GL_TEXTURE_2D, kv.second.tex);
+                glUniform1i(loc, unit);
+                unit++;
+            }
+        }
+        glActiveTexture(GL_TEXTURE0);
 
         // Upload any custom float uniforms the Lua scene has set.
         // Locations are cached in shader.custom_locs on first use — glGetUniformLocation
@@ -335,7 +395,15 @@ int ShaderPipeline::apply(GLuint fbos[2], GLuint texs[2], int w, int h,
                 shader.custom_locs[kv.first] = loc;
                 it = shader.custom_locs.find(kv.first);
             }
-            if (it->second >= 0) glUniform1f(it->second, kv.second);
+            if (it->second >= 0) {
+                const UniformValue& u = kv.second;
+                switch (u.n) {
+                    case 1: glUniform1f(it->second, u.v[0]); break;
+                    case 2: glUniform2f(it->second, u.v[0], u.v[1]); break;
+                    case 3: glUniform3f(it->second, u.v[0], u.v[1], u.v[2]); break;
+                    default: glUniform4f(it->second, u.v[0], u.v[1], u.v[2], u.v[3]); break;
+                }
+            }
         }
 
         // Draw the fullscreen quad — this runs the fragment shader over every pixel.

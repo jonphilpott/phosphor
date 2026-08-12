@@ -7,7 +7,14 @@ extern "C" {
 class Renderer;
 class ShaderPipeline;
 
+#include <vector>
+
 namespace lua_bindings {
+    // Shared argument readers for the uniform setters, so the global and the
+    // canvas-local versions parse identically.
+    int read_uniform_args(lua_State* L, int idx, float* out);   // -> component count
+    int read_data_table(lua_State* L, int idx, std::vector<float>& out);
+
     // Register all engine C functions as Lua globals.
     // Call once after the Lua VM is initialised.
     void register_all(lua_State* L);

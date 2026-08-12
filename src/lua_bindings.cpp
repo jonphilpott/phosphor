@@ -12,6 +12,7 @@
 #include "lua_text.h"
 #include "lua_vec.h"
 #include "lua_params.h"
+#include "lua_clock.h"
 #include "renderer.h"
 #include "shader_pipeline.h"
 #include <vector>
@@ -357,12 +358,67 @@ static int l_shader_clear(lua_State* L) {
     return 0;
 }
 
-// shader_set_uniform("name", value)
-// Set a float uniform on all shaders in the current pipeline.
+// Read a uniform's components from the Lua stack starting at `idx`.
+//
+// Accepts 1-4 numbers, or a vec (which counts as two). Shared by the global
+// shader_set_uniform and canvas:set_uniform so the two cannot drift apart.
+int lua_bindings::read_uniform_args(lua_State* L, int idx, float* out) {
+    float vx, vy;
+    if (lua_vec::get(L, idx, vx, vy)) {
+        out[0] = vx;
+        out[1] = vy;
+        return 2;
+    }
+    int n = 0;
+    while (n < 4 && !lua_isnoneornil(L, idx + n)) {
+        out[n] = (float)luaL_checknumber(L, idx + n);
+        n++;
+    }
+    if (n == 0) luaL_error(L, "set_uniform: needs a value");
+    return n;
+}
+
+// Read an array of numbers from a Lua table at `idx` into `out`.
+int lua_bindings::read_data_table(lua_State* L, int idx, std::vector<float>& out) {
+    luaL_checktype(L, idx, LUA_TTABLE);
+    const lua_Integer n = luaL_len(L, idx);
+    out.clear();
+    out.reserve((size_t)n);
+    for (lua_Integer i = 1; i <= n; ++i) {
+        lua_geti(L, idx, i);
+        out.push_back((float)lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    return (int)out.size();
+}
+
+// shader_set_uniform("name", value [, y [, z [, w]]])
+// shader_set_uniform("name", vec)
+//
+// Sets a float, vec2, vec3 or vec4 uniform on every shader in the pipeline
+// that declares one by that name.
 static int l_shader_set_uniform(lua_State* L) {
-    const char* name  = luaL_checkstring(L, 1);
-    float       value = (float)luaL_checknumber(L, 2);
-    get_pipeline(L)->set_uniform(name, value);
+    const char* name = luaL_checkstring(L, 1);
+    float v[4];
+    const int n = lua_bindings::read_uniform_args(L, 2, v);
+    get_pipeline(L)->set_uniform(name, v, n);
+    return 0;
+}
+
+// shader_set_data("name", table)
+//
+// Uploads an array of numbers as a 1-D texture the shaders can index per pixel:
+//
+//     uniform sampler2D u_bands;
+//     float band = texture(u_bands, vec2(v_uv.x, 0.5)).r;
+//
+// A uniform can carry four numbers; a spectrum or a per-element curve is
+// hundreds, and only a texture can be sampled per fragment.
+static int l_shader_set_data(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    std::vector<float> values;
+    const int n = lua_bindings::read_data_table(L, 2, values);
+    if (n > 0) get_pipeline(L)->set_data(name, values.data(), n);
     return 0;
 }
 
@@ -416,6 +472,7 @@ void lua_bindings::register_all(lua_State* L) {
     lua_register(L, "shader_add",          l_shader_add);
     lua_register(L, "shader_clear",        l_shader_clear);
     lua_register(L, "shader_set_uniform",  l_shader_set_uniform);
+    lua_register(L, "shader_set_data",     l_shader_set_data);
 
     // Easing and utility math (lerp, smooth, smooth_hl, map, clamp, smoothstep, pulse)
     lua_easing::register_all(L);
@@ -446,4 +503,7 @@ void lua_bindings::register_all(lua_State* L) {
 
     // OSC routing and parameters (on, param globals)
     lua_params::register_all(L);
+
+    // Musical clock (bpm, beat_phase, bar_phase, env globals)
+    lua_clock::register_all(L);
 }

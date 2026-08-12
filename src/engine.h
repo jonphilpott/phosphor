@@ -46,6 +46,12 @@ private:
     void  poll_hot_reload();                      // reload if the file changed
     void  render_frame(float dt);                 // run on_frame and present
 
+    // Draw the projector alignment grid over the scene.
+    void  draw_test_pattern();
+
+    // Draw the declared-parameter list over the scene.
+    void  draw_param_overlay();
+
     // Glyph scale for engine-drawn text, proportional to the drawable size.
     float text_scale_for_display() const;
 
@@ -74,6 +80,12 @@ private:
     ShaderPipeline m_pipeline;
 
     std::vector<OscMessage> m_osc_msgs;
+
+    // ── Live output controls ──────────────────────────────────────────────
+    bool  m_blackout      = false;  // B: kill the output, scene keeps running
+    float m_brightness    = 1.0f;   // - and =: master output level
+    bool  m_test_pattern  = false;  // T: projector alignment grid
+    bool  m_param_overlay = false;  // P: declared parameters and their values
 
     // ── Transport ─────────────────────────────────────────────────────────
     bool  m_paused     = false;   // space: hold the scene on its current frame

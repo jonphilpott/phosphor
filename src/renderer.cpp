@@ -105,13 +105,14 @@ static const char* k_blit_frag = R"glsl(
 
 uniform sampler2D u_texture;
 uniform float     u_alpha;   // overall alpha multiplier (1.0 = fully opaque)
+uniform float     u_gain;    // master output level (1.0 = unchanged)
 
 in  vec2 v_uv;
 out vec4 frag_color;
 
 void main() {
     vec4 c = texture(u_texture, v_uv);
-    frag_color = vec4(c.rgb, c.a * u_alpha);
+    frag_color = vec4(c.rgb * u_gain, c.a * u_alpha);
 }
 )glsl";
 
@@ -291,6 +292,7 @@ bool Renderer::init(int w, int h) {
     m_blit_u_texture   = glGetUniformLocation(m_blit_prog, "u_texture");
     m_blit_u_transform = glGetUniformLocation(m_blit_prog, "u_transform");
     m_blit_u_alpha     = glGetUniformLocation(m_blit_prog, "u_alpha");
+    m_blit_u_gain      = glGetUniformLocation(m_blit_prog, "u_gain");
 
     // ── Step 2b: Image pipeline ───────────────────────────────────────────
     // Used for draw_image() — draws textured quads at arbitrary pixel rects
@@ -513,7 +515,7 @@ void Renderer::end_frame(ShaderPipeline* pipeline, float time, float beat) {
         0,1,0,
         0,0,1
     };
-    blit_texture(m_fbo_tex[result_idx], k_identity, 1.0f);
+    blit_texture(m_fbo_tex[result_idx], k_identity, 1.0f, m_master);
 
     // ── Step 4: Copy result into the persistent feedback FBO ──────────────
     // The feedback FBO is never auto-cleared — it persists from frame to frame.
@@ -614,7 +616,8 @@ void Renderer::destroy_fbo(unsigned int& fbo, unsigned int& tex) {
     if (tex) { glDeleteTextures(1, &tex);     tex = 0; }
 }
 
-void Renderer::blit_texture(unsigned int tex, const float mat9[9], float alpha) {
+void Renderer::blit_texture(unsigned int tex, const float mat9[9], float alpha,
+                            float gain) {
     // Assumes the correct destination framebuffer is already bound by the caller.
     glUseProgram(m_blit_prog);
 
@@ -622,6 +625,7 @@ void Renderer::blit_texture(unsigned int tex, const float mat9[9], float alpha) 
     // GL_FALSE = do NOT transpose — our mat9 is already column-major.
     glUniformMatrix3fv(m_blit_u_transform, 1, GL_FALSE, mat9);
     glUniform1f(m_blit_u_alpha,   alpha);
+    if (m_blit_u_gain >= 0) glUniform1f(m_blit_u_gain, gain);
     glUniform1i(m_blit_u_texture, 0);
 
     glActiveTexture(GL_TEXTURE0);

@@ -190,6 +190,7 @@
   <a href="#waveforms">Waveforms</a>
   <a href="#wire3d">3D Wireframe</a>
   <a href="#fractals">Fractal Shaders</a>
+  <a href="#clock">Musical Clock</a>
   <a href="#osc">OSC</a>
   <a href="#keys">Keyboard</a>
   <a href="#scenes">Example Scenes</a>
@@ -599,6 +600,7 @@ end</code></pre>
   <tr><td><code>u_texture</code></td><td>sampler2D</td><td>Input frame texture</td></tr>
   <tr><td><code>u_resolution</code></td><td>vec2</td><td>Drawable size in pixels</td></tr>
   <tr><td><code>u_time</code></td><td>float</td><td>Elapsed seconds since startup</td></tr>
+  <tr><td><code>u_beat_phase</code></td><td><code>float</code></td><td>Continuous position within the current beat, [0,1) &mdash; see <a href="#clock">Musical Clock</a>.</td></tr>
   <tr><td><code>u_beat</code></td><td>float</td><td>Beat phase 0–1 (reserved for future use)</td></tr>
 </table>
 
@@ -650,6 +652,27 @@ void main() {
 
     frag_color = vec4(vec3(grey * vig), c.a);
 }</code></pre>
+
+<h3>Custom uniforms from Lua</h3>
+<table>
+  <tr><th>Call</th><th>Sets</th></tr>
+  <tr><td><code>shader_set_uniform(name, x)</code></td><td><code>float</code></td></tr>
+  <tr><td><code>shader_set_uniform(name, x, y)</code> or <code>(name, vec)</code></td><td><code>vec2</code></td></tr>
+  <tr><td><code>shader_set_uniform(name, x, y, z [, w])</code></td><td><code>vec3</code> / <code>vec4</code></td></tr>
+  <tr><td><code>shader_set_data(name, table)</code></td><td><code>sampler2D</code> &mdash; see below</td></tr>
+</table>
+<p><code>canvas:set_uniform</code> and <code>canvas:set_data</code> are the canvas-local equivalents.</p>
+
+<h4>Arrays as data textures</h4>
+<p>A uniform carries at most four numbers. A spectrum, an envelope curve or a per-element value is hundreds, and only a texture can be indexed per fragment. <code>shader_set_data</code> uploads a Lua array as a one-row float texture:</p>
+<pre><code>-- Lua
+local bands = {}
+for i = 1, 64 do bands[i] = level_for_band(i) end
+shader_set_data("u_bands", bands)</code></pre>
+<pre><code>// GLSL
+uniform sampler2D u_bands;
+float band = texture(u_bands, vec2(v_uv.x, 0.5)).r;</code></pre>
+<p>Sampling is nearest-neighbour and clamped at the edges &mdash; this is data, not an image, so interpolating between adjacent elements would invent values that were never measured.</p>
 
 <h3>Custom float uniforms from Lua</h3>
 <pre><code>-- In Lua:
@@ -1386,6 +1409,57 @@ end</code></pre>
 </details>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details open id="clock">
+<summary>Musical Clock</summary>
+<div class="section-body">
+
+<p><code>/beat</code> arrives as discrete events, which lets a scene flash <em>on</em> a beat but not be driven <em>by</em> one. A rotation completing exactly once per bar, an envelope decaying over an eighth note, a value easing across two beats &mdash; none of those can be expressed by a number that only changes two or three times a second.</p>
+
+<p>So the engine watches when <code>/beat</code> messages arrive, infers the tempo from the gaps between them, and exposes a phase that advances <strong>continuously in between</strong>. Musical time becomes something you can read every frame.</p>
+
+<table>
+  <tr><th>Function</th><th>Returns</th></tr>
+  <tr><td><code>bpm()</code></td><td>Inferred tempo, or 0 before enough beats have arrived.</td></tr>
+  <tr><td><code>beat_phase()</code></td><td>Position within the current beat, [0,1), advancing every frame.</td></tr>
+  <tr><td><code>bar_phase()</code></td><td>Position within the bar, [0,1). Combines whole beats counted with the fraction through the current one, so it sweeps rather than steps.</td></tr>
+  <tr><td><code>beat_count()</code></td><td>Beats since the first message.</td></tr>
+  <tr><td><code>beats_per_bar([n])</code></td><td>Get, or set and get. Default 4.</td></tr>
+  <tr><td><code>beat_active()</code></td><td>True while beats are actually arriving &mdash; use it to fall back to <code>elapsed()</code> when the clock goes quiet.</td></tr>
+  <tr><td><code>visual_latency([s])</code></td><td>Shift visual timing to compensate for projector or capture delay.</td></tr>
+</table>
+
+<pre><code>rotate(bar_phase() * math.pi * 2)          -- exactly one turn per bar
+local pulse = 1.0 - beat_phase()           -- ramp down across each beat
+if not beat_active() then t = elapsed() end</code></pre>
+
+<h3>Envelopes</h3>
+<p>Triggered decays, for anything that should fire on an event and fade:</p>
+<table>
+  <tr><th>Function</th><th>Effect</th></tr>
+  <tr><td><code>env_trigger(name)</code></td><td>Start (or restart) a named envelope at full level.</td></tr>
+  <tr><td><code>env(name [, half_life])</code></td><td>Its current value, 0..1, decaying exponentially since the last trigger. Default half-life 0.15s. A name never triggered reads 0.</td></tr>
+</table>
+<p>The name is the only state, so an envelope can be triggered in one place and read in another without the scene tracking anything:</p>
+<pre><code>on("/kick",  function() env_trigger("kick")  end)
+on("/snare", function() env_trigger("snare") end)
+
+function on_frame(dt)
+    local flash = env("kick", 0.12)
+    set_color(hsv(0.6, 0.5, 0.3 + flash * 0.7))
+    draw_circle(cx, cy, 80 + env("snare", 0.2) * 60)
+end</code></pre>
+
+<h3>How the tempo is inferred</h3>
+<p>The gaps between the last eight <code>/beat</code> messages are taken and the <strong>median</strong> used, not the mean &mdash; messages arrive over UDP on a machine also doing graphics, so one being 30ms late is normal, and a median ignores a minority of bad samples entirely where a mean would be dragged by every one of them. Gaps outside 20&ndash;400&nbsp;BPM are rejected as noise; a very long gap clears the estimate rather than averaging across a silence.</p>
+
+<p>The clock <strong>free-runs</strong> at the inferred tempo, so a dropped packet does not stall the visuals &mdash; the phase keeps advancing and re-syncs when the next beat lands. Tempo and phase live outside the Lua VM, so saving a scene mid-set does not restart the clock.</p>
+
+<p>Shaders receive the continuous phase as <code>uniform float u_beat_phase</code>, alongside the raw <code>u_beat</code> value.</p>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
 <details open id="osc">
 <summary>OSC</summary>
 <div class="section-body">
@@ -1431,6 +1505,50 @@ r = Routine({
 )
 r.stop;</code></pre>
 
+<h3>on(address, handler) &mdash; events</h3>
+<p>Register a function per address instead of growing an <code>if</code>/<code>elseif</code> ladder inside <code>on_osc</code>. Arguments arrive named rather than as <code>args[1]</code>, <code>args[2]</code>:</p>
+<pre><code>on("/left_vu", function(level, index)
+    local n = grid[index]
+    n.colour = {0, 1, 1}
+    n:target(level * 0.2)
+end)
+
+on("/scroll", function(dx, dy) ... end)
+on("/kick",   function() env_trigger("kick") end)</code></pre>
+<p>Adding an address never touches existing code. Handlers are Lua functions, so they are re-registered on every reload &mdash; which happens by itself, since <code>on()</code> calls sit at the top level or in <code>on_load</code>. Registering the same address twice replaces the handler.</p>
+
+<h3>param(name, default [, min, max]) &mdash; values</h3>
+<p>Declares and reads in one call, so it can live exactly where the value is used and is safe to call every frame:</p>
+<pre><code>function on_frame(dt)
+    local alpha  = param("feedback_alpha", 0.0, 0, 1)
+    local scroll = param("scroll", vec(0, 0))
+
+    draw_feedback(0.8 + alpha)
+    translate(scroll.x, scroll.y)
+end</code></pre>
+
+<p>The parameter listens on <code>/&lt;name&gt;</code>, and <strong>the default&rsquo;s type decides how many OSC arguments it consumes</strong>:</p>
+<table>
+  <tr><th>Default</th><th>Consumes</th><th>Example message</th></tr>
+  <tr><td><code>1.0</code> (number)</td><td>1 float</td><td><code>/speed 1.5</code></td></tr>
+  <tr><td><code>vec(0, 0)</code></td><td>2 floats</td><td><code>/scroll 10 -4</code></td></tr>
+  <tr><td><code>{0.2, 0.8, 0.4}</code></td><td>N floats</td><td><code>/color 1.0 0.2 0.6</code></td></tr>
+  <tr><td><code>"default"</code> (string)</td><td>1 string</td><td><code>/preset "warm"</code></td></tr>
+  <tr><td><code>false</code> (boolean)</td><td>1 int or float</td><td><code>/invert 1</code></td></tr>
+</table>
+<p>A message of the wrong arity or the wrong types is ignored rather than half-applied, so a bad message can never leave a value inconsistent. <code>min</code> and <code>max</code> clamp incoming values.</p>
+
+<h4>Which wins after a reload</h4>
+<p>Parameter values live outside the Lua VM, so they survive a reload. The rule is that <strong>the file wins until OSC takes over</strong>: a parameter follows the default written in your source &mdash; so editing that default and saving does what you expect while iterating &mdash; until a message arrives for it, after which the live value sticks and a save will not stomp it mid-set. Press <code>0</code> to clear every live value and fall back to the file defaults.</p>
+
+<div class="note">
+  <strong>Nothing is consumed</strong>
+  Both <code>on()</code> and <code>param()</code> observe messages without
+  swallowing them &mdash; everything still reaches <code>on_osc</code>. Adding a
+  parameter or a handler can never silently change how an existing scene
+  behaves. Declared addresses are printed at startup so you know what to send.
+</div>
+
 <h3>Engine-level address</h3>
 <p>One OSC address is handled by the engine itself and is <strong>never forwarded to <code>on_osc</code></strong>. It works even if the current scene defines no <code>on_osc</code> &mdash; or has crashed.</p>
 <table>
@@ -1473,6 +1591,11 @@ TempoClock.default.schedAbs(TempoClock.default.nextBar, {
   <tr><td><code>[</code> / <code>]</code></td><td>Halve / double the rate time passes. Affects <code>dt</code>, <code>elapsed()</code> and <code>u_time</code> together. Clamped to &times;1/64 &hellip; &times;8.</td></tr>
   <tr><td><code>\</code></td><td>Back to &times;1 speed, unpaused.</td></tr>
   <tr><td><code>R</code></td><td>Reload the scene now, without waiting for a file save. Useful for re-running <code>on_load</code> to reseed an automaton.</td></tr>
+  <tr><td><code>B</code></td><td><strong>Blackout.</strong> Output goes to black instantly; the scene keeps running and the feedback buffer keeps filling underneath, so restoring brings back a live image rather than a frozen one. The &ldquo;something is wrong, kill the projector&rdquo; key.</td></tr>
+  <tr><td><code>-</code> / <code>=</code></td><td>Master output level down / up in 10% steps, for venue brightness.</td></tr>
+  <tr><td><code>T</code></td><td>Projector alignment grid: 16-column grid, bright border, centre cross and a circle that reveals any aspect-ratio stretch. Drawn over the running scene.</td></tr>
+  <tr><td><code>P</code></td><td>Overlay the declared parameters and their current values. A star marks those under live OSC control.</td></tr>
+  <tr><td><code>0</code></td><td>Reset every parameter to the default written in the scene file, abandoning live OSC values.</td></tr>
   <tr><td><code>Esc</code></td><td>Quit.</td></tr>
 </table>
 
@@ -1579,6 +1702,10 @@ TempoClock.default.schedAbs(TempoClock.default.nextBar, {
   <tr>
     <td><code>vector_test.lua</code></td>
     <td>The vector type driving a 300-particle field steered toward a drifting attractor, in both the readable operator style and the allocation-free in-place style, coloured by speed with HSV. Also the reference for <code>persist</code>: edit any constant while it runs and the field keeps flying instead of restarting.</td>
+  </tr>
+  <tr>
+    <td><code>reactive_test.lua</code></td>
+    <td>Driving visuals from a music system: <code>on()</code> handlers for kick, snare and indexed level meters, live <code>param()</code> values, and a ring plus sweep hand driven by <code>bar_phase()</code> so they move continuously between beats. Runs with nothing connected &mdash; the clock free-runs.</td>
   </tr>
 </table>
 

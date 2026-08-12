@@ -44,7 +44,9 @@ The binary lands at `./build/phosphor`.
 | `-p <n>` | OSC UDP port (default 9000) |
 | `-h` | Print help and exit |
 
-**Keyboard:** `F` fullscreen · `Space` pause · `[` / `]` time scale · `\` reset speed · `R` reload · `Esc` quit
+**Keyboard:** `F` fullscreen · `Space` pause · `[` / `]` time scale · `\` reset speed ·
+`R` reload · `B` blackout · `-` / `=` brightness · `T` test pattern · `P` params ·
+`0` reset params · `Esc` quit
 
 ---
 
@@ -369,6 +371,53 @@ function on_osc(addr, ...)
 end
 ```
 
+### Receiving OSC without a dispatch ladder
+
+```lua
+-- Events: named arguments, one handler per address
+on("/left_vu", function(level, index) ... end)
+on("/kick",    function() env_trigger("kick") end)
+
+-- Values: declares and reads in one call, safe to call every frame
+local alpha  = param("feedback_alpha", 0.0, 0, 1)   -- /feedback_alpha <f>
+local scroll = param("scroll", vec(0, 0))           -- /scroll <f> <f>
+local col    = param("color", {0.2, 0.8, 0.4})      -- /color <f> <f> <f>
+```
+
+The default's **type** fixes how many OSC arguments a param consumes (number 1,
+vec 2, table of N → N, plus string and boolean). Wrong arity or wrong types are
+ignored rather than half-applied; `min`/`max` clamp.
+
+Param values live outside the Lua VM so they survive a reload, and **the file
+wins until OSC takes over**: a param follows the default in your source until a
+message arrives for it, after which the live value sticks and a save won't stomp
+it. Press `0` to fall back to file defaults.
+
+Neither mechanism consumes messages — everything still reaches `on_osc`.
+
+### Musical Clock
+
+`/beat` arrives as discrete events; the engine infers tempo from the gaps and
+gives you a phase that advances continuously between them.
+
+```lua
+bpm()  beat_phase()  bar_phase()  beat_count()
+beats_per_bar([n])   beat_active()   visual_latency([s])
+
+env_trigger(name)          -- fire a named envelope
+env(name [, half_life])    -- read it, decaying 1 → 0
+```
+
+```lua
+rotate(bar_phase() * math.pi * 2)      -- exactly one turn per bar
+on("/kick", function() env_trigger("kick") end)
+local flash = env("kick", 0.12)
+```
+
+Tempo uses the median of the last eight intervals, so one late UDP packet
+doesn't drag it. The clock free-runs if beats stop, and survives reload.
+Shaders get `u_beat_phase` alongside `u_beat`.
+
 **Engine-level address** (never forwarded to `on_osc`):
 
 ```
@@ -431,7 +480,24 @@ void main() {
 }
 ```
 
-Custom `float` uniforms are set from Lua with `shader_set_uniform("name", value)`.
+Uniforms from Lua:
+
+```lua
+shader_set_uniform("u_amount", 0.5)            -- float
+shader_set_uniform("u_pos", vec(x, y))         -- vec2 (or two numbers)
+shader_set_uniform("u_tint", 1.0, 0.6, 0.3)    -- vec3 (four args → vec4)
+shader_set_data("u_bands", {0.2, 0.9, ...})    -- array → 1-row float texture
+```
+
+`shader_set_data` is how bulk data reaches a shader — a uniform holds four
+numbers, a spectrum is hundreds:
+
+```glsl
+uniform sampler2D u_bands;
+float band = texture(u_bands, vec2(v_uv.x, 0.5)).r;
+```
+
+`canvas:set_uniform` and `canvas:set_data` are the canvas-local equivalents.
 
 ---
 

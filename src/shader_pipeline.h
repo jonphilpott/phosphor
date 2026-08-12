@@ -66,9 +66,17 @@ public:
     // Remove all shaders — pipeline becomes a passthrough (no post-processing).
     void clear();
 
-    // Set a float uniform that will be uploaded to every shader in the chain
-    // that exposes a uniform with the given name.
-    void set_uniform(const std::string& name, float value);
+    // Set a uniform uploaded to every shader in the chain that declares it.
+    // n is the component count: 1 = float, 2 = vec2, 3 = vec3, 4 = vec4.
+    void set_uniform(const std::string& name, const float* v, int n);
+
+    // Upload an array of floats as a 1-D data texture, sampled in GLSL as
+    // texture(name, vec2(i / count, 0.5)).r
+    //
+    // This is how per-band or per-element data reaches a fragment shader: a
+    // uniform can carry a handful of numbers, but a spectrum or an envelope
+    // curve is hundreds, and only a texture can be indexed per-pixel.
+    void set_data(const std::string& name, const float* v, int count);
 
     // Returns true when the chain is empty (no post-processing will run).
     bool empty() const { return m_shaders.empty(); }
@@ -99,8 +107,12 @@ private:
         GLint  u_resolution= -1;
         GLint  u_time      = -1;
         GLint  u_beat      = -1;
+        GLint  u_beat_phase= -1;
         std::unordered_map<std::string, GLint> custom_locs;
     };
+
+    // Delete every data texture.
+    void clear_data();
 
     // Compile + link one entry's fragment shader against the shared vertex shader.
     // Reads the .frag source from shaders/<entry.name>.frag.
@@ -108,7 +120,19 @@ private:
     bool load_shader(ShaderEntry& entry);
 
     std::vector<ShaderEntry>               m_shaders;
-    std::unordered_map<std::string, float> m_uniforms;
+    // A uniform value plus how many components it has.
+    struct UniformValue {
+        float v[4] = {0, 0, 0, 0};
+        int   n    = 1;
+    };
+    std::unordered_map<std::string, UniformValue> m_uniforms;
+
+    // A named array uploaded as a texture, plus its GL handle and length.
+    struct DataTexture {
+        GLuint tex   = 0;
+        int    count = 0;
+    };
+    std::unordered_map<std::string, DataTexture> m_data;
 
     // The shader names most recently requested via set()/add(), in order.
     // This is what set() compares against to decide whether anything actually
