@@ -96,6 +96,7 @@ clear(r, g, b, a)
 set_color(r, g, b, a)          -- fill colour for rect/circle
 set_stroke(r, g, b, a)         -- stroke colour for lines/points
 set_stroke_weight(w)
+set_circle_segments(n)         -- draw_circle tessellation (default 32)
 set_blend(mode)                -- "alpha" (default), "add", "multiply", "screen"
 draw_rect(x, y, w, h)
 draw_circle(cx, cy, r)
@@ -115,6 +116,39 @@ translate(x, y)
 rotate(radians)
 scale(sx [, sy])
 ```
+
+### Text
+
+Built-in 8×8 bitmap font — printable ASCII (`0x20`–`0x7E`), no font file needed.
+Uses the fill colour and goes through the transform stack, so text rotates and
+scales like any other geometry.
+
+```lua
+draw_text(x, y, str [, scale])    -- scale 1 = 8px glyphs; \n starts a new line
+text_width(str [, scale])         -- pixel width of the longest line
+```
+
+```lua
+local label = "SIGNAL LOST"
+set_color(1, 0.3, 0.2, 1)
+draw_text(screen_width / 2 - text_width(label, 2) / 2, 100, label, 2)
+```
+
+### Easing & Math
+
+```lua
+lerp(a, b, t)                     -- linear interpolation, not clamped
+smooth(current, target, rate, dt) -- frame-rate independent exponential smoothing
+smooth_hl(current, target, half_life, dt)   -- same, parameterised by half-life
+map(x, in_lo, in_hi, out_lo, out_hi)        -- remap a range, not clamped
+clamp(x, lo, hi)
+smoothstep(t)                     -- S-curve on [0,1], clamped
+pulse(t, bpm, width)              -- 0..1 spike on each beat
+```
+
+`smooth` and `smooth_hl` are the ones worth knowing: chasing a target with
+`lerp(current, target, 0.1)` every frame moves twice as far at 30fps as at
+60fps, whereas these stay consistent however the frame rate wanders.
 
 ### Feedback
 
@@ -166,6 +200,8 @@ sx, sy = project_3d(wx, wy, wz)   -- returns nothing if behind camera
 draw_wire_cube(cx, cy, cz, size, rx, ry, rz)
 draw_wire_sphere(cx, cy, cz, r [, lat [, lon]])
 draw_wire_grid(size, divs [, y])
+
+reset_3d()                        -- back to the default camera and projection
 ```
 
 ### Canvas

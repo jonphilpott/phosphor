@@ -175,6 +175,7 @@
   <a href="#quickstart">Quick Start</a>
   <a href="#anatomy">Scene Anatomy</a>
   <a href="#drawing">Drawing API</a>
+  <a href="#text">Bitmap Text</a>
   <a href="#transforms">Transform Stack</a>
   <a href="#feedback">Feedback</a>
   <a href="#shaders">Shader Pipeline</a>
@@ -224,12 +225,13 @@ cmake --build build</code></pre>
 <summary>Scene Anatomy</summary>
 <div class="section-body">
 
-<p>A scene is a plain Lua file. The engine calls three optional global functions:</p>
+<p>A scene is a plain Lua file. The engine calls these optional global functions:</p>
 <table>
   <tr><th>Hook</th><th>When called</th><th>Typical use</th></tr>
   <tr><td><code>on_load()</code></td><td>Once, after the file is executed</td><td>Allocate canvases, load images, set initial shader</td></tr>
   <tr><td><code>on_frame(dt)</code></td><td>Every frame — <code>dt</code> is seconds since last frame</td><td>Clear, draw geometry, advance animation state</td></tr>
   <tr><td><code>on_osc(addr, ...)</code></td><td>Once per incoming OSC message</td><td>React to live control from SuperCollider / PD</td></tr>
+  <tr><td><code>on_beat(phase)</code></td><td>On each <code>/beat</code> OSC message</td><td>Trigger something musically — advance a pattern, fire a flash, step an automaton</td></tr>
 </table>
 
 <p>All three are optional. A scene that defines none of them is valid (the window shows a &ldquo;no scene loaded&rdquo; message).</p>
@@ -339,6 +341,67 @@ end</code></pre>
     set_stroke_weight(6)
     draw_point(screen_width / 2, screen_height / 2)
 end</code></pre>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details id="text">
+<summary>Bitmap Text</summary>
+<div class="section-body">
+
+<p>An 8&times;8 monochrome bitmap font built into the binary &mdash; no font file to load, no dependency. Glyphs are drawn as filled rectangles through the normal geometry path, which means text obeys <code>set_color</code> and the transform stack exactly like a rectangle does: it rotates, scales and nests inside <code>push</code>/<code>pop</code>.</p>
+
+<h3>API</h3>
+<span class="sig">draw_text(x, y, str [, scale])</span>
+<table>
+  <tr><th>Parameter</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>x, y</code></td><td>&mdash;</td><td>Top-left corner of the first glyph, in pixel space.</td></tr>
+  <tr><td><code>str</code></td><td>&mdash;</td><td>The string to draw. <code>\n</code> returns to the starting <code>x</code> and drops one line.</td></tr>
+  <tr><td><code>scale</code></td><td>1.0</td><td>Multiplies both axes. A glyph occupies <code>8 &times; scale</code> pixels square, so <code>scale = 3</code> gives 24&nbsp;px text.</td></tr>
+</table>
+
+<span class="sig">text_width(str [, scale]) &rarr; number</span>
+<p>Pixel width of the <em>longest line</em> in <code>str</code> &mdash; every character is <code>8 &times; scale</code> wide, and <code>\n</code> starts the measurement again. Use it to centre or right-align, since the font is fixed-width and there is nothing else to measure.</p>
+
+<h3>Character set</h3>
+<p>Printable ASCII, <code>0x20</code> (space) to <code>0x7E</code> (<code>~</code>). Bytes outside that range advance the cursor by one glyph without drawing anything, so a stray control character or a UTF-8 multi-byte sequence leaves gaps rather than garbage &mdash; there are no accented or non-Latin glyphs in the font.</p>
+
+<h3>Colour and transforms</h3>
+<p>Text uses the <strong>fill</strong> colour from <code>set_color</code>, not the stroke colour. Because it goes through the transform stack, this works as you would expect:</p>
+
+<pre><code>function on_frame(dt)
+    clear(0, 0, 0, 1)
+
+    -- Plain text, top-left
+    set_color(0, 1, 0.4, 1)
+    draw_text(20, 20, "PHOSPHOR", 3)
+
+    -- Horizontally centred
+    local label = "SIGNAL LOST"
+    local w = text_width(label, 2)
+    set_color(1, 0.3, 0.2, 1)
+    draw_text(screen_width / 2 - w / 2, 100, label, 2)
+
+    -- Multi-line: \n returns to the starting x
+    set_color(0.6, 0.6, 0.6, 1)
+    draw_text(20, 160, "CH 01  -12.4 dB\nCH 02  -09.1 dB\nCH 03  -- ", 2)
+
+    -- Rotating, because it is geometry like anything else
+    push()
+        translate(screen_width / 2, screen_height / 2)
+        rotate(elapsed())
+        local t = "ROTATE"
+        draw_text(-text_width(t, 4) / 2, -16, t, 4)
+    pop()
+end</code></pre>
+
+<h3>Cost</h3>
+<p>Each glyph is emitted as one rectangle per horizontal run of lit pixels rather than one per pixel &mdash; a typical glyph row is two or three runs, so a character costs roughly 12&ndash;18 vertices instead of up to 384. Text-heavy scenes such as <code>matrix.lua</code> and <code>datafield.lua</code> are perfectly happy putting hundreds of characters on screen per frame, but a full screen of tiny text is still real geometry, not a texture blit.</p>
+
+<p>The engine uses this same font itself for the &ldquo;no scene loaded&rdquo; message and the on-screen error banner.</p>
+
+<p>See <code>scenes/text_test.lua</code> for a scene exercising every one of these features.</p>
 
 </div>
 </details>
@@ -1216,15 +1279,33 @@ r = Routine({
 )
 r.stop;</code></pre>
 
-<h3>Engine-level address</h3>
-<p>One OSC address is handled by the engine itself and is <strong>never forwarded to <code>on_osc</code></strong>:</p>
+<h3>Engine-level addresses</h3>
+<p>Two OSC addresses are handled by the engine itself and are <strong>never forwarded to <code>on_osc</code></strong>. Both work even if the current scene defines no <code>on_osc</code> &mdash; or has crashed.</p>
 <table>
   <tr><th>Address</th><th>Argument</th><th>Effect</th></tr>
-  <tr><td><code>/scene</code></td><td>string — file path</td><td>Load a new scene immediately. Path is relative to the working directory. Works from any client, even if the current scene has no <code>on_osc</code>.</td></tr>
+  <tr><td><code>/scene</code></td><td>string &mdash; file path</td><td>Load a new scene immediately. Restricted &mdash; see below.</td></tr>
+  <tr><td><code>/beat</code></td><td>float or int &mdash; phase</td><td>Sets <code>u_beat</code> for every shader in the pipeline and fires the optional <code>on_beat(phase)</code> hook. The value is whatever your clock sends: the common conventions are a <code>[0..1)</code> position within the bar, or a raw incrementing beat counter.</td></tr>
 </table>
-<pre><code>-- SuperCollider
-~p.sendMsg("/scene", "scenes/matrix.lua");
-~p.sendMsg("/scene", "scenes/fractal_test.lua");</code></pre>
+
+<h3>Why <code>/scene</code> is restricted</h3>
+<p>A scene is arbitrary Lua, and Lua scenes get the full standard library &mdash; <code>os.execute</code> included. An unrestricted <code>/scene</code> is therefore remote code execution for anyone who can reach the port. Three checks apply:</p>
+<table>
+  <tr><th>Check</th><th>Rule</th></tr>
+  <tr><td>Sender</td><td>Only honoured from <strong>this machine</strong> (loopback). Pass <code>--allow-remote-scene</code> to accept it from the network.</td></tr>
+  <tr><td>Extension</td><td>The path must end in <code>.lua</code>.</td></tr>
+  <tr><td>Location</td><td>The path is resolved with <code>realpath()</code> &mdash; collapsing <code>..</code> and following symlinks &mdash; and the result must sit inside the <strong>scene root</strong>: the directory the startup <code>-s</code> scene came from.</td></tr>
+</table>
+<p>Rejections are logged to stderr saying which check failed and what the path resolved to. <code>/beat</code> and ordinary scene messages are unaffected by any of this and work from any host.</p>
+
+<pre><code>-- SuperCollider, from the same machine
+~p = NetAddr("127.0.0.1", 9000);
+~p.sendMsg("/scene", "scenes/matrix.lua");      -- ok: inside the scene root
+~p.sendMsg("/scene", "/tmp/whatever.lua");      -- refused: outside the root
+
+-- Drive u_beat and on_beat from the transport
+TempoClock.default.schedAbs(TempoClock.default.nextBar, {
+    ~p.sendMsg("/beat", 0.0); nil
+});</code></pre>
 
 <div class="note">
   <strong>Note</strong>
@@ -1320,6 +1401,34 @@ r.stop;</code></pre>
   <tr>
     <td><code>everything_test.lua</code></td>
     <td>All four generators composed: Julia fractal background (canvas), Game of Life grid, 3D wireframe orbiting above, waveform strip centred on screen with frequency driven by cell population. OSC: <code>/randomize</code>, <code>/speed</code>, <code>/julia_cx</code>, <code>/julia_cy</code>, <code>/cam_dist</code>.</td>
+  </tr>
+  <tr>
+    <td><code>text_test.lua</code></td>
+    <td>Every feature of the bitmap text renderer: the full printable ASCII set, scales 1&ndash;4 side by side, centring via <code>text_width</code>, multi-line strings, colour changes, and text driven through <code>translate</code>/<code>rotate</code>.</td>
+  </tr>
+  <tr>
+    <td><code>image_test.lua</code></td>
+    <td>Loading a PNG with <code>image.load</code> and drawing sub-regions with <code>draw_region</code>. Expects <code>assets/test.png</code>.</td>
+  </tr>
+  <tr>
+    <td><code>sprite_test.lua</code></td>
+    <td>Sprite sheet frame cycling via <code>sprite_sheet.new</code>. Expects <code>assets/walk.png</code> with 64&times;64&nbsp;px frames.</td>
+  </tr>
+  <tr>
+    <td><code>tunnel.lua</code></td>
+    <td>Demoscene dot tunnel &mdash; a procedural path winding through 3D space generating rings of dots, with the camera flying along it.</td>
+  </tr>
+  <tr>
+    <td><code>lissajous.lua</code></td>
+    <td>Parametric Lissajous curves extended into 3D (<code>z = sin(c&middot;t)</code>), drawn with a feedback trail.</td>
+  </tr>
+  <tr>
+    <td><code>indra.lua</code></td>
+    <td>Toroidal grid of nodes propagating excitation as a ripple, with a connecting net.</td>
+  </tr>
+  <tr>
+    <td><code>3marks-conway.lua</code></td>
+    <td>Conway&rsquo;s Life filling the screen at 4&times;4&nbsp;px cells &mdash; a random soup settling into still lifes, blinkers and gliders.</td>
   </tr>
 </table>
 
