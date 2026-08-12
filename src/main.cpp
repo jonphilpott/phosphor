@@ -14,7 +14,8 @@
 //   --allow-remote-scene   Let off-machine OSC clients send /scene
 
 static void print_usage(const char* argv0) {
-    fprintf(stderr, "Usage: %s [-d <display_index>] [-s <scene_path>] [-f]\n", argv0);
+    fprintf(stderr, "Usage: %s [-d <display_index>] [-s <scene_path>] [-f] [-p <port>]\n",
+            argv0);
     fprintf(stderr, "  -d N      Open on display N (default: 0)\n");
     fprintf(stderr, "  -s path   Load scene file at startup\n");
     fprintf(stderr, "  -f        Start fullscreen\n");
