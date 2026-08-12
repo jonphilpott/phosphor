@@ -31,24 +31,8 @@ public:
     // UDP port to listen for OSC on.  Call before init().
     void set_osc_port(uint16_t port) { m_osc_port = port; }
 
-    // Establish the directory that OSC-requested scenes must live under.
-    // Pass the -s scene path (the root becomes its directory), or nullptr for
-    // the current working directory.  Call before run().
-    void set_scene_root(const char* scene_path);
-
-    // Allow /scene messages from hosts other than this machine.  Off by
-    // default: /scene loads and executes a Lua file, and Lua scenes have the
-    // full standard library including os.execute, so honouring it from the
-    // network is remote code execution.
-    void set_allow_remote_scene(bool allow) { m_allow_remote_scene = allow; }
-
 private:
     void handle_events();
-
-    // Validate and act on an OSC /scene request.  Rejects anything that isn't
-    // a .lua file resolving to a location inside the scene root, and anything
-    // from off-machine unless remote scene loading was explicitly enabled.
-    void handle_scene_request(const std::string& path, bool from_loopback);
 
     // Tear down the Lua VM, reinitialise it, and reload the current scene file.
     // Called automatically when the scene file's mtime changes.
@@ -110,10 +94,6 @@ private:
     int    m_fps_frames  = 0;
     float  m_time        = 0.0f;  // elapsed seconds — forwarded to shaders as u_time
     float  m_beat        = 0.0f;  // beat phase [0..1), set by /beat OSC — forwarded as u_beat
-
-    // ── Scene loading policy ──────────────────────────────────────────────
-    std::string m_scene_root;                // resolved dir scenes must sit under
-    bool        m_allow_remote_scene = false;
 
     // ── Hot reload state ──────────────────────────────────────────────────
     std::string m_scene_path;               // path passed to load_scene()

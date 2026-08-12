@@ -42,7 +42,6 @@ The binary lands at `./build/phosphor`.
 | `-d <n>` | Display index (0 = primary) |
 | `-f` | Start fullscreen |
 | `-p <n>` | OSC UDP port (default 9000) |
-| `--allow-remote-scene` | Honour OSC `/scene` from other machines (off by default) |
 | `-h` | Print help and exit |
 
 **Keyboard:** `F` fullscreen · `Space` pause · `[` / `]` time scale · `\` reset speed · `R` reload · `Esc` quit
@@ -280,25 +279,23 @@ function on_osc(addr, ...)
 end
 ```
 
-**Engine-level addresses** (never forwarded to `on_osc`):
+**Engine-level address** (never forwarded to `on_osc`):
 
 ```
-/scene "scenes/matrix.lua"    ← load a new scene
 /beat  0.0                    ← set u_beat and fire the on_beat(phase) hook
 ```
 
-`/scene` loads and executes a Lua file, so it is restricted: the path must end
-in `.lua` and must resolve (after following symlinks) inside the directory the
-startup scene came from, and by default it is honoured only from senders on
-this machine. Pass `--allow-remote-scene` to accept it from the network.
-Ordinary scene messages and `/beat` work from any host regardless.
+There is deliberately no OSC address for loading a scene. A scene is arbitrary
+Lua with `os.execute` behind it, so anything that loaded one from the network
+would be remote code execution. Scenes are chosen with `-s` and changed by
+editing the file — hot reload does the rest.
 
 From SuperCollider:
 
 ```supercollider
 ~p = NetAddr("127.0.0.1", 9000);
 ~p.sendMsg("/speed", 1.5);
-~p.sendMsg("/scene", "scenes/life.lua");
+~p.sendMsg("/beat", 0.0);
 ```
 
 ---

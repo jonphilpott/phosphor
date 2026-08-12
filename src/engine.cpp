@@ -11,8 +11,6 @@
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>      // realpath()
-#include <climits>      // PATH_MAX
 #include <sys/stat.h>   // stat() for file mtime polling
 
 // Return the modification time of a file, or 0 if it can't be stat'd.
@@ -213,90 +211,6 @@ void Engine::load_scene(const char* path) {
     }
 }
 
-// ── set_scene_root() ─────────────────────────────────────────────────────────
-//
-// The scene root is the one directory that OSC-loaded scenes are allowed to
-// come from.  We resolve it once, at startup, with realpath() so that all later
-// comparisons are between two fully-resolved absolute paths — no "../" left to
-// interpret, no symlinks left to follow.
-
-void Engine::set_scene_root(const char* scene_path) {
-    // Derive the directory from the scene path: everything before the last '/'.
-    std::string dir = ".";
-    if (scene_path) {
-        const char* slash = strrchr(scene_path, '/');
-        if (slash) {
-            dir.assign(scene_path, (size_t)(slash - scene_path));
-            if (dir.empty()) dir = "/";   // scene was at the filesystem root
-        }
-        // No slash at all means the scene sits in the working directory,
-        // so "." is already correct.
-    }
-
-    char resolved[PATH_MAX];
-    if (realpath(dir.c_str(), resolved)) {
-        m_scene_root = resolved;
-    } else {
-        // Leaving the root empty makes handle_scene_request reject everything,
-        // which is the safe direction to fail in.
-        m_scene_root.clear();
-        fprintf(stderr, "Warning: could not resolve scene directory '%s' — "
-                        "OSC /scene will be refused\n", dir.c_str());
-    }
-}
-
-// ── handle_scene_request() ───────────────────────────────────────────────────
-//
-// /scene is the one OSC address that causes code to be executed, so it gets
-// three independent checks rather than one.  Any of them failing is logged and
-// ignored — we never want a bad message to interrupt a running scene.
-
-void Engine::handle_scene_request(const std::string& path, bool from_loopback) {
-    // Check 1: who sent it.  A scene file is arbitrary Lua with the full
-    // standard library behind it, so by default only programs on this machine
-    // may swap it.  /beat and ordinary scene messages are unaffected by this.
-    if (!from_loopback && !m_allow_remote_scene) {
-        fprintf(stderr, "OSC /scene: refused '%s' — remote scene loading is "
-                        "disabled (pass --allow-remote-scene to permit it)\n",
-                path.c_str());
-        return;
-    }
-
-    // Check 2: it must actually be a scene file.
-    if (path.size() < 5 || path.compare(path.size() - 4, 4, ".lua") != 0) {
-        fprintf(stderr, "OSC /scene: refused '%s' — not a .lua file\n", path.c_str());
-        return;
-    }
-
-    if (m_scene_root.empty()) {
-        fprintf(stderr, "OSC /scene: refused '%s' — no scene root established\n",
-                path.c_str());
-        return;
-    }
-
-    // Check 3: where it lands.  realpath() collapses "..", resolves symlinks
-    // and fails outright if the file doesn't exist — so what comes back is the
-    // real file that would be opened, not the string somebody sent us.
-    char resolved[PATH_MAX];
-    if (!realpath(path.c_str(), resolved)) {
-        fprintf(stderr, "OSC /scene: refused '%s' — no such file\n", path.c_str());
-        return;
-    }
-
-    // Containment test.  The trailing '/' on the prefix matters: without it,
-    // a sibling directory whose name merely starts with the root's name (say
-    // /gigs/scenes-backup next to /gigs/scenes) would pass the check.
-    const std::string prefix = m_scene_root + "/";
-    if (strncmp(resolved, prefix.c_str(), prefix.size()) != 0) {
-        fprintf(stderr, "OSC /scene: refused '%s' — resolves to '%s', outside "
-                        "the scene directory '%s'\n",
-                path.c_str(), resolved, m_scene_root.c_str());
-        return;
-    }
-
-    load_scene(resolved);
-}
-
 void Engine::reload_scene() {
     printf("[hot reload] %s\n", m_scene_path.c_str());
 
@@ -470,16 +384,6 @@ void Engine::dispatch_osc() {
 // Returns true if the message was consumed and must not reach on_osc.
 
 bool Engine::handle_engine_osc(const OscMessage& msg) {
-    // ── /scene <path> ────────────────────────────────────────────────────────
-    // Swap the running scene, e.g. /scene "scenes/matrix.lua".
-    // handle_scene_request does the security checks — see its definition.
-    if (msg.address == "/scene") {
-        if (!msg.args.empty() && msg.args[0].type == 's') {
-            handle_scene_request(msg.args[0].s, msg.from_loopback);
-        }
-        return true;
-    }
-
     // ── /beat <phase> ────────────────────────────────────────────────────────
     // Updates m_beat (→ u_beat in all shaders) and fires on_beat(phase).
     // phase is a float the caller defines — common convention is [0..1) where

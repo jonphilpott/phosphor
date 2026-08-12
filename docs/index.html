@@ -213,7 +213,6 @@ cmake --build build</code></pre>
   <tr><td><code>-d &lt;n&gt;</code></td><td>Display index (0 = primary)</td><td>0</td></tr>
   <tr><td><code>-f</code></td><td>Start fullscreen</td><td>off</td></tr>
   <tr><td><code>-p &lt;n&gt;</code></td><td>UDP port to listen for OSC on. If something else already holds the port (an OSC monitor such as Protokol, or a stray phosphor), the bind fails loudly at startup rather than silently sharing it &mdash; the kernel would deliver each datagram to only one listener.</td><td>9000</td></tr>
-  <tr><td><code>--allow-remote-scene</code></td><td>Honour OSC <code>/scene</code> from other machines. Off by default — <code>/scene</code> executes a Lua file, so accepting it from the network lets anyone who can reach port 9000 run code. Scenes must still resolve inside the <code>-s</code> directory either way.</td><td>off</td></tr>
   <tr><td><code>-h</code></td><td>Print help and exit</td><td>—</td></tr>
 </table>
 
@@ -1279,30 +1278,24 @@ r = Routine({
 )
 r.stop;</code></pre>
 
-<h3>Engine-level addresses</h3>
-<p>Two OSC addresses are handled by the engine itself and are <strong>never forwarded to <code>on_osc</code></strong>. Both work even if the current scene defines no <code>on_osc</code> &mdash; or has crashed.</p>
+<h3>Engine-level address</h3>
+<p>One OSC address is handled by the engine itself and is <strong>never forwarded to <code>on_osc</code></strong>. It works even if the current scene defines no <code>on_osc</code> &mdash; or has crashed.</p>
 <table>
   <tr><th>Address</th><th>Argument</th><th>Effect</th></tr>
-  <tr><td><code>/scene</code></td><td>string &mdash; file path</td><td>Load a new scene immediately. Restricted &mdash; see below.</td></tr>
   <tr><td><code>/beat</code></td><td>float or int &mdash; phase</td><td>Sets <code>u_beat</code> for every shader in the pipeline and fires the optional <code>on_beat(phase)</code> hook. The value is whatever your clock sends: the common conventions are a <code>[0..1)</code> position within the bar, or a raw incrementing beat counter.</td></tr>
 </table>
 
-<h3>Why <code>/scene</code> is restricted</h3>
-<p>A scene is arbitrary Lua, and Lua scenes get the full standard library &mdash; <code>os.execute</code> included. An unrestricted <code>/scene</code> is therefore remote code execution for anyone who can reach the port. Three checks apply:</p>
-<table>
-  <tr><th>Check</th><th>Rule</th></tr>
-  <tr><td>Sender</td><td>Only honoured from <strong>this machine</strong> (loopback). Pass <code>--allow-remote-scene</code> to accept it from the network.</td></tr>
-  <tr><td>Extension</td><td>The path must end in <code>.lua</code>.</td></tr>
-  <tr><td>Location</td><td>The path is resolved with <code>realpath()</code> &mdash; collapsing <code>..</code> and following symlinks &mdash; and the result must sit inside the <strong>scene root</strong>: the directory the startup <code>-s</code> scene came from.</td></tr>
-</table>
-<p>Rejections are logged to stderr saying which check failed and what the path resolved to. <code>/beat</code> and ordinary scene messages are unaffected by any of this and work from any host.</p>
+<div class="note">
+  <strong>No scene switching over OSC</strong>
+  There is deliberately no OSC address for loading a scene. A scene is arbitrary
+  Lua with the full standard library behind it, <code>os.execute</code> included,
+  so an address that loaded one would be remote code execution for anyone who
+  could reach the port. Scenes are chosen with <code>-s</code> at launch and
+  changed by editing the file, which hot reload picks up.
+</div>
 
-<pre><code>-- SuperCollider, from the same machine
+<pre><code>-- SuperCollider: drive u_beat and on_beat from the transport
 ~p = NetAddr("127.0.0.1", 9000);
-~p.sendMsg("/scene", "scenes/matrix.lua");      -- ok: inside the scene root
-~p.sendMsg("/scene", "/tmp/whatever.lua");      -- refused: outside the root
-
--- Drive u_beat and on_beat from the transport
 TempoClock.default.schedAbs(TempoClock.default.nextBar, {
     ~p.sendMsg("/beat", 0.0); nil
 });</code></pre>

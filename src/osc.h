@@ -26,12 +26,6 @@ struct OscMessage {
     std::string          address;
     std::vector<OscArg>  args;
 
-    // True when the datagram came from 127.0.0.0/8 — i.e. from a program on
-    // this machine rather than from the network.  Engine-level commands that
-    // can execute code (/scene) are restricted to local senders by default;
-    // ordinary scene messages ignore this entirely.
-    bool                 from_loopback = false;
-
     // Convenience accessors — return default value if index is out of range
     // or the type doesn't match.
     int32_t     int_arg(size_t idx, int32_t def = 0)    const;

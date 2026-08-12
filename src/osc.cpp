@@ -148,20 +148,14 @@ void OscServer::recv_loop() {
         int ready = select(m_socket + 1, &fds, nullptr, nullptr, &tv);
         if (ready <= 0) continue;  // timeout or error — loop and check m_running
 
-        // Receive one UDP datagram.  We keep the sender address: it is what
-        // tells us whether the packet came from this machine or from the
-        // network, which decides whether /scene is allowed to act on it.
+        // Receive one UDP datagram.  The sender address is filled in but not
+        // used: every address is dispatched to the scene the same way, and no
+        // OSC message can do anything privileged.
         sockaddr_in sender{};
         socklen_t   sender_len = sizeof(sender);
         ssize_t nbytes = recvfrom(m_socket, buf, sizeof(buf), 0,
                                   (sockaddr*)&sender, &sender_len);
         if (nbytes <= 0) continue;
-
-        // Is the sender on loopback (127.0.0.0/8)?  s_addr is in network byte
-        // order, so ntohl first, then check the top octet.
-        const bool loopback =
-            (sender.sin_family == AF_INET) &&
-            ((ntohl(sender.sin_addr.s_addr) >> 24) == 127);
 
         // Parse the whole datagram.  parse_packet handles both plain messages
         // and bundles, and never reads past nbytes — no part of the packet is
@@ -171,15 +165,11 @@ void OscServer::recv_loop() {
 
         if (m_parsed.empty()) continue;
 
-        // Stamp the sender's locality onto each message, then hand the batch to
-        // the main thread.  One lock for the whole datagram rather than one per
-        // message keeps the critical section short.
+        // Hand the batch to the main thread.  One lock for the whole datagram
+        // rather than one per message keeps the critical section short.
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            for (auto& parsed : m_parsed) {
-                parsed.from_loopback = loopback;
-                m_queue.push(std::move(parsed));
-            }
+            for (auto& parsed : m_parsed) m_queue.push(std::move(parsed));
         }
     }
 }
