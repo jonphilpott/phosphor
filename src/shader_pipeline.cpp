@@ -143,11 +143,25 @@ bool ShaderPipeline::load_shader(ShaderEntry& entry) {
 // ── ShaderPipeline::set / add / clear ─────────────────────────────────────────
 
 void ShaderPipeline::set(const std::vector<std::string>& names) {
+    // Rebuilding the chain means deleting GPU programs, reading .frag files off
+    // disk, and running the driver's GLSL compiler and linker.  That is fine
+    // once; it is ruinous every frame — and canvas:finish("julia") is called
+    // from on_frame, so this function really is invoked sixty times a second
+    // with the same argument.  Comparing the requested names against the ones
+    // already loaded turns all but the first of those calls into a no-op.
+    if (names == m_active_names) return;
+
     clear();
     for (const auto& name : names) add(name);
 }
 
 void ShaderPipeline::add(const std::string& name) {
+    // Record the requested name whether or not it loads.  If a scene asks for a
+    // shader that doesn't exist (a typo in the filename, say), we want the
+    // failure reported once — not a fresh fopen and a fresh error line on every
+    // frame for the rest of the set.
+    m_active_names.push_back(name);
+
     ShaderEntry entry;
     entry.name = name;
     if (load_shader(entry)) {
@@ -161,6 +175,7 @@ void ShaderPipeline::clear() {
         if (s.prog) glDeleteProgram(s.prog);
     }
     m_shaders.clear();
+    m_active_names.clear();
 }
 
 void ShaderPipeline::set_uniform(const std::string& name, float value) {

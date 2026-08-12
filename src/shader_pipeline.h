@@ -85,6 +85,12 @@ private:
     std::vector<ShaderEntry>               m_shaders;
     std::unordered_map<std::string, float> m_uniforms;
 
+    // The shader names most recently requested via set()/add(), in order.
+    // This is what set() compares against to decide whether anything actually
+    // needs rebuilding.  It tracks requested names rather than successfully
+    // loaded ones, so a name that fails to compile is not retried every frame.
+    std::vector<std::string>               m_active_names;
+
     // Fullscreen quad: 4 vertices, each [ndc_x, ndc_y, u, v].
     // Used for every blit in the post-process chain.
     GLuint m_quad_vao = 0;
