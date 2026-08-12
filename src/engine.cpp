@@ -2,6 +2,7 @@
 #include "lua_bindings.h"
 #include "lua_text.h"   // text_render::draw — for the "no scene loaded" message
 #include "lua_persist.h"
+#include "lua_params.h"
 #include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
@@ -364,6 +365,12 @@ void Engine::dispatch_osc() {
         // work regardless of whether the current scene defines on_osc — or even
         // if that scene has crashed.
         if (handle_engine_osc(msg)) continue;
+
+        // Offer the message to declared parameters and on() handlers. This
+        // never consumes it: whatever they do, the message still reaches
+        // on_osc below, so adding a param or a handler cannot silently change
+        // how an existing scene behaves.
+        lua_params::dispatch(m_lua.L, msg);
 
         // Look up the global function on_osc.  If it isn't defined in the
         // current scene, silently skip — not every scene needs OSC input.

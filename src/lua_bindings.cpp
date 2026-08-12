@@ -11,6 +11,7 @@
 #include "lua_3d.h"
 #include "lua_text.h"
 #include "lua_vec.h"
+#include "lua_params.h"
 #include "renderer.h"
 #include "shader_pipeline.h"
 #include <vector>
@@ -442,4 +443,7 @@ void lua_bindings::register_all(lua_State* L) {
 
     // 2D vector type (vec global)
     lua_vec::register_all(L);
+
+    // OSC routing and parameters (on, param globals)
+    lua_params::register_all(L);
 }
