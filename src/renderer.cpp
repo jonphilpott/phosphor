@@ -366,6 +366,13 @@ bool Renderer::init(int w, int h) {
     m_stack[0] = Mat3::identity();
     m_stack_top = 0;
 
+    // Seed the render-target stack with the scene FBO.  begin_frame() sets this
+    // again every frame, but on_load() runs before the first frame and may call
+    // something that asks for the target size (perspective_3d does) — without
+    // this the stack entry would be read while still uninitialised.
+    m_target_stack[0] = { m_fbo[0], m_width, m_height };
+    m_target_top = 0;
+
     return true;
 }
 
@@ -401,6 +408,13 @@ void Renderer::set_size(int w, int h) {
     create_fbo(w, h, m_fbo[0],      m_fbo_tex[0]);
     create_fbo(w, h, m_fbo[1],      m_fbo_tex[1]);
     create_fbo(w, h, m_feedback_fbo, m_feedback_tex);
+
+    // The old FBO handles are gone, so the target stack must be re-pointed at
+    // the new scene FBO — a resize can arrive between frames, and anything
+    // asking for the target size before the next begin_frame would otherwise
+    // get the pre-resize dimensions and a deleted framebuffer handle.
+    m_target_stack[0] = { m_fbo[0], m_width, m_height };
+    m_target_top = 0;
 
     // Re-clear the feedback FBO so there's no garbage from the old texture.
     glBindFramebuffer(GL_FRAMEBUFFER, m_feedback_fbo);

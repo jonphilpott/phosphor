@@ -210,6 +210,16 @@ public:
     void pop_target();
     float get_time() const { return m_time; }
 
+    // Dimensions of whatever we are currently drawing into — the screen-sized
+    // scene FBO normally, or a canvas's FBO between canvas:begin() and
+    // canvas:finish().  Anything that needs to convert to or from pixel
+    // coordinates must ask for this rather than reading the screen size, or it
+    // will be wrong by the ratio between the canvas and the window.
+    void target_size(int& w, int& h) const {
+        w = m_target_stack[m_target_top].w;
+        h = m_target_stack[m_target_top].h;
+    }
+
     // Flush the CPU vertex buffer to the GPU immediately.
     // Normally called automatically by push_target/pop_target/end_frame.
     // Exposed publicly so canvas:finish() can commit geometry before running

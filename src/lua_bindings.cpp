@@ -59,6 +59,18 @@ static int l_clear(lua_State* L) {
     float g = (float)luaL_optnumber(L, 2, 0.0);
     float b = (float)luaL_optnumber(L, 3, 0.0);
     float a = (float)luaL_optnumber(L, 4, 1.0);
+
+    // Commit any geometry queued before this call BEFORE clearing.
+    //
+    // Draw calls don't reach the GPU immediately — they accumulate in the
+    // renderer's CPU vertex buffer and are flushed later.  Without this flush,
+    // shapes drawn before clear() would still be sitting in that buffer when
+    // glClear wipes the framebuffer, and would then be drawn on top of the
+    // fresh background — surviving the very clear that should have erased them.
+    // Flushing first makes clear() mean what it says at any point in a frame.
+    Renderer* rend = get_renderer(L);
+    if (rend) rend->flush();
+
     glClearColor(r, g, b, a);
     glClear(GL_COLOR_BUFFER_BIT);
     return 0;

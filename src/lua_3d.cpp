@@ -211,6 +211,21 @@ static bool project(float wx, float wy, float wz,
     return true;
 }
 
+// Pixel dimensions of whatever we're drawing into right now.
+//
+// This deliberately asks the renderer rather than reading the screen_width /
+// screen_height Lua globals.  Between canvas:begin() and canvas:finish() the
+// render target is the canvas's FBO, which is usually a different size and
+// aspect ratio from the window — projecting with the window's dimensions there
+// puts every vertex in the wrong place and stretches the result.  It also saves
+// two lua_getglobal calls per 3D draw call.
+static void target_dims(Renderer* r, float& sw, float& sh) {
+    int w = 0, h = 0;
+    r->target_size(w, h);
+    sw = (float)w;
+    sh = (float)h;
+}
+
 // Helper: draw a line between two world-space points if both are visible.
 // If one point is behind the camera, the edge is skipped entirely
 // (no clipping against the near plane — simple but sufficient for wireframes).
@@ -244,13 +259,14 @@ static int l_perspective_3d(lua_State* L) {
     float near = (float)luaL_optnumber(L, 2, 0.1);
     float far  = (float)luaL_optnumber(L, 3, 1000.0);
 
-    // Read current screen dimensions for automatic aspect ratio.
-    lua_getglobal(L, "screen_width");
-    lua_getglobal(L, "screen_height");
-    float sw = (float)lua_tonumber(L, -2);
-    float sh = (float)lua_tonumber(L, -1);
-    lua_pop(L, 2);
-    float aspect = (sh > 0.0f) ? (sw / sh) : (16.0f/9.0f);
+    // Aspect ratio comes from the current render target.
+    Renderer* r = lua_bindings::get_renderer(L);
+    float aspect = 16.0f / 9.0f;
+    if (r) {
+        float sw, sh;
+        target_dims(r, sw, sh);
+        if (sh > 0.0f) aspect = sw / sh;
+    }
 
     g_proj    = Mat4::perspective(fov, aspect, near, far);
     g_vp_dirty = true;
@@ -269,11 +285,10 @@ static int l_project_3d(lua_State* L) {
     float wy = (float)luaL_checknumber(L, 2);
     float wz = (float)luaL_checknumber(L, 3);
 
-    lua_getglobal(L, "screen_width");
-    lua_getglobal(L, "screen_height");
-    float sw = (float)lua_tonumber(L, -2);
-    float sh = (float)lua_tonumber(L, -1);
-    lua_pop(L, 2);
+    Renderer* r = lua_bindings::get_renderer(L);
+    if (!r) return 0;
+    float sw, sh;
+    target_dims(r, sw, sh);
 
     float sx, sy;
     if (!project(wx, wy, wz, sw, sh, sx, sy)) return 0;  // nil, nil
@@ -298,11 +313,8 @@ static int l_draw_wire_cube(lua_State* L) {
     Renderer* r = lua_bindings::get_renderer(L);
     if (!r) return 0;
 
-    lua_getglobal(L, "screen_width");
-    lua_getglobal(L, "screen_height");
-    float sw = (float)lua_tonumber(L, -2);
-    float sh = (float)lua_tonumber(L, -1);
-    lua_pop(L, 2);
+    float sw, sh;
+    target_dims(r, sw, sh);
 
     // Model matrix: rotate then translate to world position.
     // Rotation order Ry*Rx*Rz (yaw → pitch → roll).
@@ -359,11 +371,8 @@ static int l_draw_wire_sphere(lua_State* L) {
     Renderer* r = lua_bindings::get_renderer(L);
     if (!r) return 0;
 
-    lua_getglobal(L, "screen_width");
-    lua_getglobal(L, "screen_height");
-    float sw = (float)lua_tonumber(L, -2);
-    float sh = (float)lua_tonumber(L, -1);
-    lua_pop(L, 2);
+    float sw, sh;
+    target_dims(r, sw, sh);
 
     // Latitude circles: rings at phi = i*π/(lat+1) for i = 1..lat.
     // phi = 0 → top pole, phi = π → bottom pole (both skipped — just points).
@@ -416,11 +425,8 @@ static int l_draw_wire_grid(lua_State* L) {
     Renderer* r = lua_bindings::get_renderer(L);
     if (!r) return 0;
 
-    lua_getglobal(L, "screen_width");
-    lua_getglobal(L, "screen_height");
-    float sw = (float)lua_tonumber(L, -2);
-    float sh = (float)lua_tonumber(L, -1);
-    lua_pop(L, 2);
+    float sw, sh;
+    target_dims(r, sw, sh);
 
     float half = size * 0.5f;
     float step = size / (float)divs;

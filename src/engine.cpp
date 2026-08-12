@@ -221,6 +221,14 @@ bool Engine::init() {
         fprintf(stderr, "Warning: OSC server failed to start — continuing without OSC\n");
     }
 
+    // Seed the C random number generator.  conway:randomize() and
+    // wolfram:randomize() call rand(); without a seed the C library starts from
+    // the same state on every launch, so those scenes came up with the byte-for
+    // -byte identical "random" pattern every single time they were run.
+    // (Lua's math.random has its own generator and its own seeding — this is
+    // only about the C-side automata.)
+    srand((unsigned)time(nullptr));
+
     // Initialise the frame timer.
     m_last_ticks = m_fps_ticks = SDL_GetTicks64();
 
@@ -336,6 +344,15 @@ void Engine::reload_scene() {
     // canvas FBOs or image textures the scene allocated) then calls init().
     m_lua.reset();
 
+    // Step 1b: Reset the post-process pipeline.
+    // The pipeline is GPU-side state and so survives the Lua reset, but it was
+    // configured by the *old* scene: its shader chain and its accumulated
+    // uniform values both belong to code that no longer exists.  Without this,
+    // a reloaded scene that doesn't call shader_set() inherits the previous
+    // scene's shaders, and the uniform map grows with every reload of the day.
+    // The new scene's on_load() sets up whatever it actually wants.
+    m_pipeline.clear();
+
     // Step 2: Re-wire the engine bindings into the new VM.
     // The renderer and pipeline live on the Engine and are completely untouched
     // by the Lua reset — we just re-register their pointers.
@@ -364,6 +381,17 @@ void Engine::run() {
         Uint64 now = SDL_GetTicks64();
         float dt   = (now - m_last_ticks) / 1000.0f;
         m_last_ticks = now;
+
+        // Clamp dt to a sane frame.  Anything that stalls the loop — a hot
+        // reload, dragging the window, the compositor suspending us — produces
+        // one enormous dt on the frame afterwards.  Scenes integrate dt, so an
+        // unclamped spike makes everything leap forward: rotations jump,
+        // particles teleport off screen, and physics-ish scenes never recover.
+        // Better to lose a little wall-clock accuracy than to lurch on stage.
+        const float MAX_DT = 0.1f;   // 10 fps worth — below this we run normally
+        if (dt > MAX_DT) dt = MAX_DT;
+        if (dt < 0.0f)   dt = 0.0f;  // guard against clock going backwards
+
         m_time += dt;
 
         // FPS counter — update the window title once per second.

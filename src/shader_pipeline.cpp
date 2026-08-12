@@ -41,15 +41,28 @@ static char* read_file(const char* path) {
     }
 
     // Seek to end to get file size, then rewind.
+    //
+    // ftell returns -1 on error — and it does error, for instance when `path`
+    // turns out to be a directory, which fopen("rb") happily opens on Linux.
+    // A negative size would then reach malloc(size + 1) as a wrapped-around
+    // enormous value and fread as a huge count, so it is checked before use.
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
+    if (size < 0) {
+        fprintf(stderr, "ShaderPipeline: cannot determine size of '%s'\n", path);
+        fclose(f);
+        return nullptr;
+    }
     rewind(f);
 
-    char* buf = (char*)malloc(size + 1);
+    char* buf = (char*)malloc((size_t)size + 1);
     if (!buf) { fclose(f); return nullptr; }
 
-    fread(buf, 1, size, f);
-    buf[size] = '\0';
+    // Terminate at the number of bytes actually read, not the number we asked
+    // for: a short read would otherwise leave uninitialised bytes in the middle
+    // of the shader source handed to the GLSL compiler.
+    size_t got = fread(buf, 1, (size_t)size, f);
+    buf[got] = '\0';
     fclose(f);
     return buf;
 }

@@ -79,23 +79,34 @@ static int l_wolfram_new(lua_State* L) {
     int width = (int)luaL_checkinteger(L, 2);
     int rows  = (int)luaL_optinteger(L, 3, 256);
 
-    luaL_argcheck(L, rule  >= 0 && rule  <= 255, 1, "rule must be 0-255");
-    luaL_argcheck(L, width >= 1,                 2, "width must be >= 1");
-    luaL_argcheck(L, rows  >= 1,                 3, "rows must be >= 1");
+    // The upper bounds matter as much as the lower ones: `rows * width` below is
+    // an int multiply, so unbounded values overflow to a negative number, which
+    // calloc then reinterprets as a colossal size_t.  Capping each dimension at
+    // 65535 keeps the product comfortably inside int range (and 65535 cells is
+    // already far more than any display can show).
+    luaL_argcheck(L, rule  >= 0 && rule  <= 255,   1, "rule must be 0-255");
+    luaL_argcheck(L, width >= 1 && width <= 65535, 2, "width must be 1-65535");
+    luaL_argcheck(L, rows  >= 1 && rows  <= 65535, 3, "rows must be 1-65535");
 
     // Allocate the userdata struct (stored on the Lua heap).
+    //
+    // Order matters here.  luaL_error longjmps out of this function, so the
+    // object must already be in a state __gc can handle safely *before* anything
+    // that might fail: zero it first (so cells is null, and free(null) is a
+    // no-op), then attach the metatable, then do the risky allocation.
     WolframCA* ca = (WolframCA*)lua_newuserdata(L, sizeof(WolframCA));
+    memset(ca, 0, sizeof(WolframCA));
     ca->rule     = rule;
     ca->width    = width;
     ca->num_rows = rows;
-    ca->head     = 0;
-    ca->filled   = 0;
-
-    // Allocate the cell buffer separately (can be large — keep off Lua heap).
-    ca->cells = (uint8_t*)calloc(rows * width, 1);
-    if (!ca->cells) luaL_error(L, "wolfram: out of memory (%d bytes)", rows * width);
 
     luaL_setmetatable(L, WOLFRAM_MT);
+
+    // Allocate the cell buffer separately (can be large — keep off Lua heap).
+    // The size_t casts keep the multiply out of int range; the argchecks above
+    // already bound it, and the casts make that guarantee explicit here.
+    ca->cells = (uint8_t*)calloc((size_t)rows * (size_t)width, 1);
+    if (!ca->cells) luaL_error(L, "wolfram: out of memory (%d bytes)", rows * width);
     return 1;
 }
 
@@ -119,11 +130,14 @@ static int l_wolfram_seed(lua_State* L) {
 // Fills the initial row with random 0/1 values.
 static int l_wolfram_randomize(lua_State* L) {
     WolframCA* ca = check_wolfram(L);
-    memset(ca->cells, 0, ca->num_rows * ca->width);
+    memset(ca->cells, 0, (size_t)ca->num_rows * (size_t)ca->width);
     ca->head   = 0;
     ca->filled = 1;
+    // Take a middle bit rather than bit 0: several C libraries implement rand()
+    // as a linear congruential generator whose low bit alternates in a short
+    // cycle, which would give a visibly striped starting row instead of noise.
     for (int c = 0; c < ca->width; c++)
-        ca->cells[c] = rand() & 1;
+        ca->cells[c] = (rand() >> 16) & 1;
     return 0;
 }
 
@@ -266,21 +280,28 @@ static void conway_step_impl(ConwayCA* ca) {
 static int l_conway_new(lua_State* L) {
     int w = (int)luaL_checkinteger(L, 1);
     int h = (int)luaL_checkinteger(L, 2);
-    luaL_argcheck(L, w >= 1, 1, "width must be >= 1");
-    luaL_argcheck(L, h >= 1, 2, "height must be >= 1");
+    // Upper bounds guard the `w * h` multiply below against int overflow, which
+    // would otherwise reach calloc as a wrapped-around size.
+    luaL_argcheck(L, w >= 1 && w <= 65535, 1, "width must be 1-65535");
+    luaL_argcheck(L, h >= 1 && h <= 65535, 2, "height must be 1-65535");
 
+    // Zero and attach the metatable before allocating, so a failure partway
+    // through leaves an object whose __gc can run harmlessly (see the same
+    // pattern in l_wolfram_new above).
     ConwayCA* ca = (ConwayCA*)lua_newuserdata(L, sizeof(ConwayCA));
+    memset(ca, 0, sizeof(ConwayCA));
     ca->width  = w;
     ca->height = h;
-    ca->cur    = (uint8_t*)calloc(w * h, 1);
-    ca->nxt    = (uint8_t*)calloc(w * h, 1);
-
-    if (!ca->cur || !ca->nxt) {
-        free(ca->cur); free(ca->nxt);
-        luaL_error(L, "conway: out of memory");
-    }
 
     luaL_setmetatable(L, CONWAY_MT);
+
+    const size_t cells = (size_t)w * (size_t)h;
+    ca->cur = (uint8_t*)calloc(cells, 1);
+    ca->nxt = (uint8_t*)calloc(cells, 1);
+    if (!ca->cur || !ca->nxt) {
+        luaL_error(L, "conway: out of memory (%dx%d)", w, h);
+    }
+
     return 1;
 }
 
