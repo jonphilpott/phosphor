@@ -8,11 +8,24 @@
 #include <initializer_list>
 #include <utility>
 
-// Maximum vertices we'll ever push in a single frame.
-// Sized for dense automata grids at Retina resolution:
-//   640 cols × 360 rows × 6 verts/rect ≈ 1.38 M verts at 100% density.
-// Using 1 M (2^20) as a safe ceiling — 24 MB CPU + 24 MB GPU buffer.
-static constexpr int MAX_VERTS = 1048576;
+// Capacity of one vertex batch, measured in triangles because that is the unit
+// everything here actually emits: a rect is 2 triangles, a line quad is 2, a
+// circle is one per segment.
+//
+// This is a *batch* size, not a per-frame limit.  When the buffer fills mid
+// frame it is flushed to the GPU and refilled, so a scene can draw as much
+// geometry as it likes — it just costs one extra draw call per batch.  That
+// makes the number a straight memory-versus-draw-call trade rather than a
+// ceiling to be sized for the worst case, which is why it can be far smaller
+// than the 1 M vertices this used to reserve (25 MB of CPU buffer and another
+// 25 MB on the GPU, permanently, on a machine that might be a Raspberry Pi).
+//
+// 87381 triangles ≈ 262 k vertices ≈ 6 MB per side. A full-screen 640×360
+// automata grid at 100% density is ~460 k vertices, so a worst-case frame is
+// two draw calls instead of one.
+static constexpr int MAX_TRIS  = 87381;
+static constexpr int MAX_VERTS = MAX_TRIS * 3;   // multiple of 3 — see push_vert
+static constexpr int VERT_FLOATS = 6;            // x, y, r, g, b, a
 
 // ── GLSL shaders (inline) ─────────────────────────────────────────────────────
 //
@@ -270,7 +283,7 @@ bool Renderer::init(int w, int h) {
 
     // ── Step 1: Geometry pipeline ─────────────────────────────────────────
     // Reserve CPU buffer upfront to avoid per-frame reallocations.
-    m_verts.reserve(MAX_VERTS * 6);
+    m_verts.reserve((size_t)MAX_VERTS * VERT_FLOATS);
 
     // Compile the geometry shaders (pixel-coord → NDC, with colour).
     unsigned int vert = compile(GL_VERTEX_SHADER,   k_vert);
@@ -287,13 +300,15 @@ bool Renderer::init(int w, int h) {
 
     glGenBuffers(1, &m_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, MAX_VERTS * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)MAX_VERTS * VERT_FLOATS * sizeof(float),
+                 nullptr, GL_DYNAMIC_DRAW);
 
     // Attribute 0 — position: 2 floats at offset 0.
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, VERT_FLOATS*sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     // Attribute 1 — colour: 4 floats at byte offset 8.
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)(2*sizeof(float)));
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, VERT_FLOATS*sizeof(float), (void*)(2*sizeof(float)));
     glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 
@@ -552,22 +567,31 @@ void Renderer::flush_verts() {
     glUseProgram(m_shader_prog);
     glUniform2f(m_u_resolution, (float)tgt.w, (float)tgt.h);
 
-    // glBufferSubData reuses the already-allocated VBO rather than requesting
-    // new GPU memory — significantly faster than glBufferData each frame.
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+
+    // "Buffer orphaning": hand the driver a null pointer with the same size and
+    // usage first, which tells it we no longer care about the old contents.
+    //
+    // Why bother?  The GPU may still be reading this buffer for a draw call we
+    // issued earlier.  Writing straight into it with glBufferSubData would then
+    // force the driver to stall the CPU until that read finishes.  Orphaning
+    // lets it hand us a fresh block of memory instead and recycle the old one
+    // once the pending draw is done — no stall.  This mattered little when the
+    // buffer was uploaded once per frame, but now that a busy frame can flush
+    // several times, each of those would have been a potential stall.
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)MAX_VERTS * VERT_FLOATS * sizeof(float),
+                 nullptr, GL_DYNAMIC_DRAW);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
                     m_verts.size() * sizeof(float),
                     m_verts.data());
 
-    glDrawArrays(GL_TRIANGLES, 0, (int)m_verts.size() / 6);
+    glDrawArrays(GL_TRIANGLES, 0, (int)(m_verts.size() / VERT_FLOATS));
     glBindVertexArray(0);
 
     // Clear the buffer — we've uploaded everything.
     m_verts.clear();
-    // Reset the overflow flag so the warning fires again if the next frame
-    // also exceeds MAX_VERTS — without this it would only ever fire once.
-    m_verts_overflow = false;
 }
 
 bool Renderer::create_fbo(int w, int h, unsigned int& fbo, unsigned int& tex) {
@@ -762,20 +786,22 @@ void Renderer::xform(float x, float y, float& ox, float& oy) const {
 }
 
 void Renderer::push_vert(float x, float y, float r, float g, float b, float a) {
-    // Guard: the VBO was allocated for exactly MAX_VERTS vertices.  If we'd
-    // exceed that, glBufferSubData would write past the end of the GPU buffer
-    // (undefined behaviour).  This can happen with large automata grids at
-    // 100% density — drop the extra geometry rather than crashing, but warn
-    // once per frame so the developer knows geometry is being lost.
-    if ((int)m_verts.size() >= MAX_VERTS * 6) {
-        if (!m_verts_overflow) {
-            fprintf(stderr,
-                "Renderer: vertex buffer full (%d verts) — geometry dropped this frame. "
-                "Reduce draw call density or increase MAX_VERTS in renderer.cpp.\n",
-                MAX_VERTS);
-            m_verts_overflow = true;
-        }
-        return;
+    // Batch full?  Send it to the GPU and carry on with an empty buffer.
+    //
+    // This used to discard the vertex instead, which meant a dense enough frame
+    // silently lost geometry — the scene simply drew less than it asked for and
+    // printed a warning nobody sees during a performance.  Flushing costs one
+    // extra draw call and keeps the output correct.
+    //
+    // Flushing here is safe only between primitives, never inside one: a
+    // triangle split across two draw calls would leave its first vertices
+    // stranded (glDrawArrays rounds the count down to whole triangles) and
+    // shift every following triangle by one vertex. Every primitive pushes a
+    // multiple of 3 vertices and MAX_VERTS is a multiple of 3, so the buffer
+    // can only ever reach capacity exactly on a triangle boundary — which is
+    // what makes this check correct at vertex granularity.
+    if ((int)m_verts.size() >= MAX_VERTS * VERT_FLOATS) {
+        flush_verts();
     }
 
     // Transform from local space to screen space via the current matrix.
@@ -819,13 +845,32 @@ void Renderer::draw_rect(float x, float y, float w, float h) {
 void Renderer::draw_circle(float cx, float cy, float radius) {
     // Build a filled circle as N triangles, each sharing the centre vertex.
     // For each segment i: emit (centre, perimeter[i], perimeter[i+1]).
-    float step = (2.0f * 3.14159265f) / (float)m_circle_segs;
+    //
+    // The unit circle is cached rather than recomputed: the sin/cos values for
+    // a given segment count never change, so a scene drawing a few hundred
+    // circles was calling the trig functions tens of thousands of times a frame
+    // to get the same numbers back. rebuild_circle_table() refills it whenever
+    // set_circle_segments() changes the resolution.
+    if ((int)m_circle_cos.size() != m_circle_segs + 1) rebuild_circle_table();
+
     for (int i = 0; i < m_circle_segs; ++i) {
-        float a0 = step *  i;
-        float a1 = step * (i + 1);
         push_vert_fill(cx, cy);
-        push_vert_fill(cx + cosf(a0) * radius, cy + sinf(a0) * radius);
-        push_vert_fill(cx + cosf(a1) * radius, cy + sinf(a1) * radius);
+        push_vert_fill(cx + m_circle_cos[i]     * radius, cy + m_circle_sin[i]     * radius);
+        push_vert_fill(cx + m_circle_cos[i + 1] * radius, cy + m_circle_sin[i + 1] * radius);
+    }
+}
+
+// Fill the cached unit-circle table for the current segment count.
+// The table has segs+1 entries so the last segment can close back onto the
+// first point without a wrap-around index (entry [segs] == entry [0]).
+void Renderer::rebuild_circle_table() {
+    const float step = (2.0f * 3.14159265f) / (float)m_circle_segs;
+    m_circle_cos.resize(m_circle_segs + 1);
+    m_circle_sin.resize(m_circle_segs + 1);
+    for (int i = 0; i <= m_circle_segs; ++i) {
+        const float a = step * (float)i;
+        m_circle_cos[i] = cosf(a);
+        m_circle_sin[i] = sinf(a);
     }
 }
 

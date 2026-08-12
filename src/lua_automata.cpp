@@ -246,25 +246,42 @@ static ConwayCA* check_conway(lua_State* L) {
 }
 
 static void conway_step_impl(ConwayCA* ca) {
-    int w = ca->width, h = ca->height;
+    const int w = ca->width, h = ca->height;
 
+    // The obvious way to write this — a nested dx/dy loop doing
+    // (x + dx + w) % w and (y + dy + h) % h for each of the 8 neighbours —
+    // costs eight integer divisions per cell. On a 320×180 grid that is about
+    // 460,000 divisions per generation, and integer division is one of the
+    // slowest instructions a CPU has. It is also entirely avoidable:
+    //
+    //   - The three row offsets are the same for every cell in a row, so they
+    //     are computed once per row instead of eight times per cell.
+    //   - Along a row, the wrap only ever happens at the two ends, so the left
+    //     and right indices are tracked incrementally rather than recomputed.
+    //
+    // Same toroidal topology, same B3/S23 rules, no modulo in the inner loop.
     for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            // Count the 8 Moore neighbours, wrapping at edges (toroidal).
-            int n = 0;
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dx = -1; dx <= 1; dx++) {
-                    if (dx == 0 && dy == 0) continue;
-                    int nx = (x + dx + w) % w;
-                    int ny = (y + dy + h) % h;
-                    n += ca->cur[ny * w + nx];
-                }
-            }
+        // Row offsets for the row above, this row, and the row below, wrapping
+        // top-to-bottom. Computed once per row.
+        const int y_up   = (y == 0)     ? (h - 1) : (y - 1);
+        const int y_down = (y == h - 1) ? 0       : (y + 1);
+        const uint8_t* row_up   = ca->cur + (size_t)y_up   * w;
+        const uint8_t* row_mid  = ca->cur + (size_t)y      * w;
+        const uint8_t* row_down = ca->cur + (size_t)y_down * w;
+        uint8_t*       row_out  = ca->nxt + (size_t)y      * w;
 
-            int alive = ca->cur[y * w + x];
+        for (int x = 0; x < w; x++) {
+            // Column indices either side, wrapping left-to-right.
+            const int x_left  = (x == 0)     ? (w - 1) : (x - 1);
+            const int x_right = (x == w - 1) ? 0       : (x + 1);
+
+            const int n = row_up  [x_left] + row_up  [x] + row_up  [x_right]
+                        + row_mid [x_left] +                row_mid [x_right]
+                        + row_down[x_left] + row_down[x] + row_down[x_right];
+
             // B3/S23: born on 3, survives on 2 or 3.
-            ca->nxt[y * w + x] = alive ? (n == 2 || n == 3 ? 1 : 0)
-                                        : (n == 3 ? 1 : 0);
+            row_out[x] = row_mid[x] ? (n == 2 || n == 3 ? 1 : 0)
+                                    : (n == 3 ? 1 : 0);
         }
     }
 

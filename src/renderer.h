@@ -141,8 +141,12 @@ private:
     void push_vert_stroke(float x, float y);
 
     // Upload and draw the accumulated vertex buffer, then clear it.
-    // Called by end_frame() and draw_feedback() (which must flush before blitting).
+    // Called by end_frame() and draw_feedback() (which must flush before blitting),
+    // and by push_vert() when the batch fills up mid-frame.
     void flush_verts();
+
+    // Recompute the cached unit-circle sin/cos table for m_circle_segs.
+    void rebuild_circle_table();
 
     // Create one FBO + colour texture at size w×h.
     // The texture uses GL_RGBA8 with GL_LINEAR filtering.
@@ -235,9 +239,6 @@ private:
     // ── CPU vertex buffer ─────────────────────────────────────────────────
     // Format per vertex: x, y, r, g, b, a  (6 floats)
     std::vector<float> m_verts;
-    // Set to true the first time push_vert() hits MAX_VERTS in a given frame.
-    // Cleared by flush_verts() so the warning fires at most once per frame.
-    bool m_verts_overflow = false;
 
     // ── State ─────────────────────────────────────────────────────────────
     int   m_width  = 0;
@@ -248,6 +249,11 @@ private:
     float m_stroke[4] = {1,1,1,1};    // current stroke colour
     float m_stroke_weight = 1.0f;
     int   m_circle_segs   = 32;
+
+    // Cached unit circle for draw_circle, holding m_circle_segs+1 points.
+    // Rebuilt only when the segment count changes.
+    std::vector<float> m_circle_cos;
+    std::vector<float> m_circle_sin;
 
     // Transform stack — starts with identity, reset each frame.
     static constexpr int MAX_STACK = 64;

@@ -56,17 +56,33 @@ static int l_draw_text(lua_State* L) {
             uint8_t bits = glyph[row];
             if (!bits) continue;    // skip blank rows early
 
-            for (int col = 0; col < 8; col++) {
-                // Bit 'col' (starting from LSB) represents the pixel
-                // at horizontal position 'col' in this row.
-                if (bits & (1 << col)) {
-                    r->draw_rect(
-                        x + col * scale,   // pixel X
-                        y + row * scale,   // pixel Y
-                        scale,             // pixel width
-                        scale              // pixel height
-                    );
-                }
+            // Emit one rectangle per *run* of consecutive set bits rather than
+            // one per bit.
+            //
+            // Each rectangle costs 6 vertices, so drawing pixel-by-pixel spent
+            // up to 384 vertices on a single character — and scenes like
+            // matrix.lua and datafield.lua put hundreds of characters on screen
+            // every frame. Glyph rows are mostly solid strokes: "H" has rows
+            // like 11000011 (two runs) and 11111111 (one run), so merging runs
+            // typically cuts the vertex count for text by around three times
+            // and produces pixel-identical output, since adjacent squares of
+            // the same colour and one rectangle spanning them are the same
+            // shape.
+            int col = 0;
+            while (col < 8) {
+                // Bit 'col' (counting from the LSB) is the pixel at horizontal
+                // position 'col' in this row. Skip clear bits.
+                if (!(bits & (1 << col))) { col++; continue; }
+
+                const int run_start = col;
+                while (col < 8 && (bits & (1 << col))) col++;
+
+                r->draw_rect(
+                    x + run_start * scale,        // pixel X of the run's start
+                    y + row * scale,              // pixel Y of this glyph row
+                    (col - run_start) * scale,    // one pixel per bit in the run
+                    scale
+                );
             }
         }
 
