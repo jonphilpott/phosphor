@@ -173,6 +173,7 @@
 
 <nav>
   <a href="#quickstart">Quick Start</a>
+  <a href="#keys">Keyboard</a>
   <a href="#anatomy">Scene Anatomy</a>
   <a href="#drawing">Drawing API</a>
   <a href="#text">Bitmap Text</a>
@@ -192,7 +193,6 @@
   <a href="#fractals">Fractal Shaders</a>
   <a href="#clock">Musical Clock</a>
   <a href="#osc">OSC</a>
-  <a href="#keys">Keyboard</a>
   <a href="#scenes">Example Scenes</a>
 </nav>
 
@@ -208,6 +208,8 @@ cmake --build build</code></pre>
 <h3>Run</h3>
 <pre><code>./build/phosphor -s scenes/test.lua</code></pre>
 
+<p>Once running, the engine is driven by <a href="#keys">keyboard</a> &mdash; <code>F</code> fullscreen, <code>Space</code> pause, <code>B</code> blackout, <code>T</code> alignment grid, <code>P</code> parameters.</p>
+
 <h3>Command-line flags</h3>
 <table>
   <tr><th>Flag</th><th>Description</th><th>Default</th></tr>
@@ -216,6 +218,48 @@ cmake --build build</code></pre>
   <tr><td><code>-f</code></td><td>Start fullscreen</td><td>off</td></tr>
   <tr><td><code>-p &lt;n&gt;</code></td><td>UDP port to listen for OSC on. If something else already holds the port (an OSC monitor such as Protokol, or a stray phosphor), the bind fails loudly at startup rather than silently sharing it &mdash; the kernel would deliver each datagram to only one listener.</td><td>9000</td></tr>
   <tr><td><code>-h</code></td><td>Print help and exit</td><td>—</td></tr>
+</table>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<details open id="keys">
+<summary>Keyboard</summary>
+<div class="section-body">
+
+<p>Everything the engine does by hand. Grouped by why you would reach for it &mdash; the output group is the one to know before a show.</p>
+
+<h3>Output &mdash; live safety</h3>
+<table>
+  <tr><th>Key</th><th>Action</th></tr>
+  <tr><td><code>B</code></td><td><strong>Blackout.</strong> Output goes to black instantly. The scene keeps running and the feedback buffer keeps filling underneath, so restoring brings back a live image rather than a frozen one. This is the &ldquo;something is wrong, kill the projector&rdquo; key.</td></tr>
+  <tr><td><code>-</code> / <code>=</code></td><td>Master output level down / up, in 10% steps. For venue brightness, and for not blinding a front row.</td></tr>
+  <tr><td><code>F</code></td><td>Toggle fullscreen on the current display. Viewport and Lua globals update immediately.</td></tr>
+</table>
+
+<h3>Transport &mdash; controlling time</h3>
+<table>
+  <tr><th>Key</th><th>Action</th></tr>
+  <tr><td><code>Space</code></td><td>Pause. The scene keeps redrawing with <code>dt = 0</code>, so feedback trails hold still rather than the screen going black, and anything driven by <code>elapsed()</code> freezes in place.</td></tr>
+  <tr><td><code>[</code> / <code>]</code></td><td>Halve / double the rate time passes. Affects <code>dt</code>, <code>elapsed()</code> and <code>u_time</code> together. Clamped to &times;1/64 &hellip; &times;8.</td></tr>
+  <tr><td><code>\</code></td><td>Back to &times;1 speed, unpaused.</td></tr>
+</table>
+<p>None of these touch the <a href="#clock">musical clock</a>, which runs on the wall clock &mdash; pausing the visuals does not distort tempo or beat phase.</p>
+
+<h3>Scene and parameters</h3>
+<table>
+  <tr><th>Key</th><th>Action</th></tr>
+  <tr><td><code>R</code></td><td>Reload the scene now, without waiting for a file save. Useful for re-running <code>on_load</code> to reseed an automaton. State in <code>persist</code> still survives.</td></tr>
+  <tr><td><code>P</code></td><td>Overlay the declared parameters and their current values. A star marks those under live OSC control rather than following the scene file.</td></tr>
+  <tr><td><code>0</code></td><td>Reset every parameter to the default written in the scene file, abandoning live OSC values.</td></tr>
+</table>
+
+<h3>Setup</h3>
+<table>
+  <tr><th>Key</th><th>Action</th></tr>
+  <tr><td><code>T</code></td><td>Projector alignment grid, drawn over the running scene: 16-column grid, bright border, centre cross, and a circle that reveals any aspect-ratio stretch &mdash; it only stays circular if the pixels are square. The drawable size is printed in the corner.</td></tr>
+  <tr><td><code>Esc</code></td><td>Quit.</td></tr>
 </table>
 
 </div>
@@ -1579,28 +1623,6 @@ TempoClock.default.schedAbs(TempoClock.default.nextBar, {
 </div>
 </details>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
-<details open id="keys">
-<summary>Keyboard Shortcuts</summary>
-<div class="section-body">
-
-<table>
-  <tr><th>Key</th><th>Action</th></tr>
-  <tr><td><code>F</code></td><td>Toggle fullscreen on the current display. The viewport and Lua globals update immediately.</td></tr>
-  <tr><td><code>Space</code></td><td>Pause. The scene keeps redrawing with <code>dt = 0</code>, so feedback trails hold still rather than the screen going black.</td></tr>
-  <tr><td><code>[</code> / <code>]</code></td><td>Halve / double the rate time passes. Affects <code>dt</code>, <code>elapsed()</code> and <code>u_time</code> together. Clamped to &times;1/64 &hellip; &times;8.</td></tr>
-  <tr><td><code>\</code></td><td>Back to &times;1 speed, unpaused.</td></tr>
-  <tr><td><code>R</code></td><td>Reload the scene now, without waiting for a file save. Useful for re-running <code>on_load</code> to reseed an automaton.</td></tr>
-  <tr><td><code>B</code></td><td><strong>Blackout.</strong> Output goes to black instantly; the scene keeps running and the feedback buffer keeps filling underneath, so restoring brings back a live image rather than a frozen one. The &ldquo;something is wrong, kill the projector&rdquo; key.</td></tr>
-  <tr><td><code>-</code> / <code>=</code></td><td>Master output level down / up in 10% steps, for venue brightness.</td></tr>
-  <tr><td><code>T</code></td><td>Projector alignment grid: 16-column grid, bright border, centre cross and a circle that reveals any aspect-ratio stretch. Drawn over the running scene.</td></tr>
-  <tr><td><code>P</code></td><td>Overlay the declared parameters and their current values. A star marks those under live OSC control.</td></tr>
-  <tr><td><code>0</code></td><td>Reset every parameter to the default written in the scene file, abandoning live OSC values.</td></tr>
-  <tr><td><code>Esc</code></td><td>Quit.</td></tr>
-</table>
-
-</div>
-</details>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════ -->
 <details open id="scenes">

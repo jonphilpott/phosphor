@@ -44,9 +44,41 @@ The binary lands at `./build/phosphor`.
 | `-p <n>` | OSC UDP port (default 9000) |
 | `-h` | Print help and exit |
 
-**Keyboard:** `F` fullscreen · `Space` pause · `[` / `]` time scale · `\` reset speed ·
-`R` reload · `B` blackout · `-` / `=` brightness · `T` test pattern · `P` params ·
-`0` reset params · `Esc` quit
+### Keyboard
+
+**Output — live safety**
+
+| Key | Action |
+|-----|--------|
+| `B` | Blackout. Output to black instantly; the scene keeps running underneath, so restoring brings back a live image, not a frozen one |
+| `-` / `=` | Master output level down / up, 10% steps |
+| `F` | Toggle fullscreen on the current display |
+
+**Transport**
+
+| Key | Action |
+|-----|--------|
+| `Space` | Pause — scene redraws with `dt = 0`, so trails hold still instead of going black |
+| `[` / `]` | Halve / double the rate time passes (`dt`, `elapsed()`, `u_time`) |
+| `\` | Back to ×1 speed, unpaused |
+
+Transport does not affect the musical clock, which runs on the wall clock —
+pausing the visuals won't distort tempo or beat phase.
+
+**Scene and parameters**
+
+| Key | Action |
+|-----|--------|
+| `R` | Reload now, without waiting for a file save (`persist` still survives) |
+| `P` | Overlay declared parameters and their values; `*` marks live OSC control |
+| `0` | Reset parameters to the defaults written in the scene file |
+
+**Setup**
+
+| Key | Action |
+|-----|--------|
+| `T` | Projector alignment grid, over the running scene — includes a circle that reveals aspect-ratio stretch |
+| `Esc` | Quit |
 
 ---
 
