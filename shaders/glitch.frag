@@ -100,18 +100,8 @@ void main() {
     vec2  tear_uv = vec2(fract(uv.x + tear_dx), fract(uv.y + tear_dy));
     vec4  torn    = texture(u_texture, tear_uv);
 
-    // ── Step 6: Signal dropout ────────────────────────────────────────────────
-    // A very small fraction of ~8px bands randomly collapse to black — like the
-    // signal dying for a single scanline group.  Very fast time slot so it
-    // appears and disappears quickly, giving a "sparkling" corruption.
-    float drop_y = floor(uv.y * u_resolution.y / 8.0);
-    float drop_r = rand(vec2(drop_y * 0.031, floor(u_time * 24.0)));
-    float dropout = step(1.0 - 0.04 * amount, drop_r);
-
     // ── Composite ─────────────────────────────────────────────────────────────
     vec4 col = vec4(r, g, b, 1.0);
     col = mix(col, torn, in_tear);                        // tear overwrites strip
-    col = mix(col, vec4(0.0, 0.0, 0.0, 1.0), dropout);   // dropout → black
-
     frag_color = col;
 }

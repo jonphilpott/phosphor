@@ -273,6 +273,40 @@ pulse(t, bpm, width)              -- 0..1 spike on each beat
 `lerp(current, target, 0.1)` every frame moves twice as far at 30fps as at
 60fps, whereas these stay consistent however the frame rate wanders.
 
+### Values that glide
+
+`smooth_hl` needs somewhere to park the value between frames and a call every
+frame to advance it. `slew` keeps both for you: set a target from anywhere, read
+back a value that is already on its way there.
+
+```lua
+slew(name, default [, slew_time])   -- declares and reads, safe every frame
+  .set(v)                           -- retarget; the glide starts from here
+  .get()                            -- current value; foo() reads it too
+```
+
+```lua
+function on_frame(dt)
+    local hue = slew("hue", 0.55, 0.15)     -- 0.15s to cover 99% of a jump
+    if beat_count() % 4 == 0 then hue.set(0.9) end
+    set_color_hsv(hue.get(), 0.8, 1.0)
+end
+```
+
+The curve is exponential, so retargeting mid-glide bends it rather than kinking
+it, and a `slew_time` of 0 snaps. Slews run on the engine's clock: pause freezes
+one where it stands and `[` / `]` stretch it, like everything else on screen.
+
+Values live outside the Lua VM so they survive a reload, and **the file wins
+until `set()`**: a slew follows the default in your source until the scene sets
+it, after which the live value sticks and saving mid-glide won't snap it back.
+The slew time is a declaration, not a value, so it always follows the file —
+retune the glide, save, and the new timing applies at once. Press `0` to fall
+back to file defaults.
+
+`hue` is a handle, not a number: read it with `hue.get()` or `hue()`, because
+Lua has no way to make a bare table stand in for a number everywhere.
+
 ### Feedback
 
 Blends the previous frame back over the current one — classic CRT phosphor trail effect.

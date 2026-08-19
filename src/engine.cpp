@@ -4,6 +4,7 @@
 #include "lua_persist.h"
 #include "lua_params.h"
 #include "lua_clock.h"
+#include "lua_slew.h"
 #include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
@@ -276,15 +277,24 @@ void Engine::reload_scene() {
 // Each frame is the same five steps, in this order:
 //   1. work out how much time passed        — update_timing()
 //   2. act on anything that arrived by OSC  — dispatch_osc()
-//   3. reload the scene if its file changed — poll_hot_reload()
-//   4. handle window and keyboard events    — handle_events()
-//   5. draw                                 — render_frame()
+//   3. advance every slewed value           — lua_slew::update()
+//   4. reload the scene if its file changed — poll_hot_reload()
+//   5. handle window and keyboard events    — handle_events()
+//   6. draw                                 — render_frame()
 
 void Engine::run() {
     while (m_running) {
         const float dt = update_timing();
 
         dispatch_osc();
+
+        // Slews advance before on_frame runs, so a scene reads an
+        // already-current value. A target set during on_frame therefore starts
+        // moving on the following frame, which is what you want — advancing
+        // after the scene had set its targets would apply a whole frame of
+        // glide to a target that was only just chosen.
+        lua_slew::update(dt);
+
         poll_hot_reload();
         handle_events();
         render_frame(dt);
@@ -769,10 +779,11 @@ void Engine::handle_events() {
                         m_param_overlay = !m_param_overlay;
                         break;
 
-                    // 0: put every parameter back to the value written in the
-                    // scene file, abandoning live OSC control.
+                    // 0: put every parameter and slew back to the value
+                    // written in the scene file, abandoning live control.
                     case SDLK_0:
                         lua_params::reset_to_defaults();
+                        lua_slew::reset_to_defaults();
                         break;
                 }
                 break;

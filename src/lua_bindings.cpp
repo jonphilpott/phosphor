@@ -13,6 +13,7 @@
 #include "lua_vec.h"
 #include "lua_params.h"
 #include "lua_clock.h"
+#include "lua_slew.h"
 #include "renderer.h"
 #include "shader_pipeline.h"
 #include <vector>
@@ -506,4 +507,7 @@ void lua_bindings::register_all(lua_State* L) {
 
     // Musical clock (bpm, beat_phase, bar_phase, env globals)
     lua_clock::register_all(L);
+
+    // Self-smoothing named variables (slew global)
+    lua_slew::register_all(L);
 }
