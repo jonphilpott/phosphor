@@ -11,3 +11,10 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+// stb_image_write — the encoder half, same author, same single-header pattern.
+// It carries its own deflate compressor, so writing a PNG needs no zlib link.
+// Compiled here alongside the decoder to keep both stb implementations in one
+// translation unit rather than paying for a second slow-to-compile file.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"

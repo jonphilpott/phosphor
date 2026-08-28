@@ -77,6 +77,7 @@ pausing the visuals won't distort tempo or beat phase.
 
 | Key | Action |
 |-----|--------|
+| `S` | Save the frame to `snapshots/` as a timestamped PNG |
 | `T` | Projector alignment grid, over the running scene — includes a circle that reveals aspect-ratio stretch |
 | `Esc` | Quit |
 
@@ -315,6 +316,33 @@ Blends the previous frame back over the current one — classic CRT phosphor tra
 draw_feedback(alpha [, scale [, angle]])
 ```
 
+### Snapshots
+
+Saves the finished frame to `snapshots/` as a PNG. Triggered three ways — the
+`S` key, the `/snapshot` OSC address, or from a scene:
+
+```lua
+snapshot()            -- snapshots/phosphor-20260828-214500.png
+snapshot("chorus")    -- snapshots/chorus.png
+```
+
+The name is a stem, not a path — it is scrubbed to letters, digits, dash and
+underscore, and an existing file is never overwritten (`chorus-2.png`, and so
+on). The directory is created on first use, relative to wherever phosphor was
+launched from.
+
+What gets captured is the fully composited, post-processed frame **at full
+brightness**: the master level and blackout are applied only where the frame is
+blitted to the screen, so a snapshot taken during a blackout still records the
+image the scene was making. The `T` grid and `P` overlay *are* included if they
+happen to be switched on.
+
+Requesting a capture never blocks the render loop on the disk. The pixels are
+read back on the GL thread — a few milliseconds, one frame of jitter — and the
+PNG is compressed and written on a background thread, so calling it on a beat
+does not stutter the visuals. Calling it *every* frame will happily fill your
+disk; gate it on something.
+
 ### Post-Process Shaders
 
 ```lua
@@ -495,7 +523,9 @@ and bar position all keep advancing — and survives reload. Shaders get
 **Engine-level address** (never forwarded to `on_osc`):
 
 ```
-/beat  0.0                    ← set u_beat and fire the on_beat(phase) hook
+/beat      0.0                ← set u_beat and fire the on_beat(phase) hook
+/snapshot                     ← save the frame to snapshots/, timestamped
+/snapshot  "chorus"           ← ...or under a name you choose
 ```
 
 There is deliberately no OSC address for loading a scene. A scene is arbitrary
@@ -584,7 +614,7 @@ phosphor/
 ├── shaders/        GLSL fragment shaders
 ├── assets/         Images for example scenes
 ├── docs/           index.html — full API reference
-└── vendor/         Embedded dependencies (Lua 5.4, GLAD, stb_image)
+└── vendor/         Embedded dependencies (Lua 5.4, GLAD, stb_image, stb_image_write)
 ```
 
 ---
@@ -596,6 +626,7 @@ All vendored — no package manager needed beyond SDL2 and CMake:
 - **Lua 5.4** — scripting VM
 - **GLAD** — OpenGL function pointer loader
 - **stb_image** — PNG/JPG loader
+- **stb_image_write** — PNG encoder for snapshots (carries its own deflate, so no zlib link)
 
 OSC parsing is hand-written in `src/osc_parse.cpp` rather than vendored: the
 data arrives over UDP from anywhere on the network, so every read is bounds

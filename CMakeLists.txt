@@ -69,6 +69,7 @@ add_executable(phosphor
     src/lua_clock.cpp
     src/lua_easing.cpp
     src/stb_image_impl.cpp
+    src/snapshot.cpp
     src/renderer.cpp
     src/shader_pipeline.cpp
 )
@@ -98,3 +99,12 @@ endif()
 # of noise we can't act on, so the flags go on the phosphor target alone —
 # otherwise the warnings that matter get lost among hundreds that don't.
 target_compile_options(phosphor PRIVATE -Wall -Wextra)
+
+# ...except the one file that is nothing but other people's code.
+#
+# stb_image_impl.cpp exists solely to compile the two stb single-header
+# implementations, so every warning it produces is in vendored source we can't
+# act on — uninitialised-field notes and a deprecated sprintf, ten of them per
+# build. That's exactly the noise the flags above were kept off lua54 and glad
+# to avoid, so this TU is compiled quiet for the same reason.
+set_source_files_properties(src/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")

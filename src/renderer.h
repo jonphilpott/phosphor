@@ -91,6 +91,21 @@ public:
     // Recreates all FBOs at the new dimensions.
     void set_size(int w, int h);
 
+    // Render-target dimensions in pixels — the size of every FBO the renderer
+    // owns, which is the drawable size, not the window size (they differ by the
+    // DPI scale factor on a Retina display).
+    int width()  const { return m_width; }
+    int height() const { return m_height; }
+
+    // The feedback FBO, exposed so the snapshot code can read pixels out of it.
+    //
+    // This is the right buffer to capture from: end_frame() copies the fully
+    // composited, post-processed frame into it as its last act, and does so
+    // WITHOUT the master output level (see set_master above).  A snapshot
+    // therefore records the image the scene made, at full brightness, whatever
+    // the venue dimmer or a blackout happen to be doing to the projector.
+    unsigned int feedback_fbo() const { return m_feedback_fbo; }
+
     // ── Transform stack ───────────────────────────────────────────────────
     // Mirrors Processing's pushMatrix/popMatrix.  The stack starts with the
     // identity transform.  Transforms compose: if you translate(100,0) then

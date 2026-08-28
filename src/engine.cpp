@@ -5,6 +5,7 @@
 #include "lua_params.h"
 #include "lua_clock.h"
 #include "lua_slew.h"
+#include "snapshot.h"
 #include "gl_utils.h"
 
 // glad.h MUST be included before any SDL or system OpenGL headers.
@@ -32,6 +33,11 @@ Engine::Engine(int display_index)
 
 Engine::~Engine() {
     // Clean up in reverse order of creation.
+    //
+    // Snapshots first, and before the GL context goes away: shutdown() blocks
+    // until the writer thread has drained its queue, so a capture taken a
+    // moment before Esc still lands on disk instead of dying with the process.
+    snapshot::shutdown();
     m_pipeline.shutdown();
     m_renderer.shutdown();
     if (m_gl_ctx)       SDL_GL_DeleteContext(m_gl_ctx);
@@ -299,6 +305,16 @@ void Engine::run() {
         handle_events();
         render_frame(dt);
 
+        // Service any snapshot requested this frame — by the S key, by /snapshot
+        // over OSC, or by the scene calling snapshot() from on_frame.
+        //
+        // It has to happen here, after render_frame() and not inside it: the
+        // feedback FBO is only filled with the finished image by end_frame(),
+        // which is the last thing render_frame() does. Ask any earlier and you
+        // capture the previous frame.
+        snapshot::service(m_renderer.feedback_fbo(),
+                          m_renderer.width(), m_renderer.height());
+
         // Swap the back buffer to the screen (respects the vsync interval).
         SDL_GL_SwapWindow(m_window);
 
@@ -447,6 +463,27 @@ bool Engine::handle_engine_osc(const OscMessage& msg) {
             }
         } else {
             lua_pop(m_lua.L, 1);
+        }
+        return true;
+    }
+
+    // ── /snapshot [name] ─────────────────────────────────────────────────────
+    // Saves the frame about to be drawn as a PNG under snapshots/.
+    //
+    // With no argument the file is timestamped. With a string argument that
+    // string becomes the filename stem, so a sequencer can name its captures:
+    //   ~p.sendMsg("/snapshot");            → snapshots/phosphor-20260828-214500.png
+    //   ~p.sendMsg("/snapshot", "chorus");  → snapshots/chorus.png
+    //
+    // The name is scrubbed down to letters, digits, dash and underscore before
+    // it reaches the filesystem — OSC is unauthenticated, so anything that can
+    // reach the port could otherwise pick where phosphor writes. See
+    // sanitise() in snapshot.cpp.
+    if (msg.address == "/snapshot") {
+        if (!msg.args.empty() && msg.args[0].type == 's') {
+            snapshot::request(msg.args[0].s.c_str());
+        } else {
+            snapshot::request();
         }
         return true;
     }
@@ -767,6 +804,15 @@ void Engine::handle_events() {
                         m_brightness += 0.1f;
                         if (m_brightness > 1.0f) m_brightness = 1.0f;
                         printf("[output] brightness %.0f%%\n", m_brightness * 100.0f);
+                        break;
+
+                    // S: save the current frame as a PNG under snapshots/.
+                    //
+                    // Queued rather than captured here — handle_events() runs
+                    // before the frame is drawn, so the image worth saving
+                    // doesn't exist yet. run() services it after render_frame().
+                    case SDLK_s:
+                        snapshot::request();
                         break;
 
                     // T: alignment grid, for lining up a projector before doors.

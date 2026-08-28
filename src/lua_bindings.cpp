@@ -14,6 +14,7 @@
 #include "lua_params.h"
 #include "lua_clock.h"
 #include "lua_slew.h"
+#include "snapshot.h"
 #include "renderer.h"
 #include "shader_pipeline.h"
 #include <vector>
@@ -277,6 +278,26 @@ static int l_elapsed(lua_State* L) {
     return 1;
 }
 
+// snapshot([name]) → save this frame as a PNG under snapshots/
+//
+// With no argument the file is timestamped; with a string it becomes the
+// filename stem. Call it from on_frame or on_beat to have a scene capture
+// itself — on a downbeat, at the end of an animation, when a value crosses a
+// threshold — rather than needing a hand on the keyboard.
+//
+// Note the ordering: on_frame runs BEFORE the renderer composites, so the
+// request is queued and serviced after this frame is finished. You always get
+// the frame you were drawing when you asked, never the one before it.
+//
+// Calling it every frame will produce a file every frame, which will fill the
+// disk and eventually make the writer thread the slowest thing in the process.
+// Gate it on something.
+static int l_snapshot(lua_State* L) {
+    const char* name = luaL_optstring(L, 1, nullptr);
+    snapshot::request(name);
+    return 0;
+}
+
 // ── Drawing primitives ────────────────────────────────────────────────────────
 
 static int l_draw_rect(lua_State* L) {
@@ -460,6 +481,9 @@ void lua_bindings::register_all(lua_State* L) {
 
     // Engine clock
     lua_register(L, "elapsed",             l_elapsed);
+
+    // Frame capture
+    lua_register(L, "snapshot",            l_snapshot);
 
     // Drawing primitives
     lua_register(L, "draw_rect",           l_draw_rect);

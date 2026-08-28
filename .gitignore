@@ -1,2 +1,4 @@
 build/
 my_projects/*
+snapshots/
+.DS_Store
